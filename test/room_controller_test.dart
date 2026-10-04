@@ -420,4 +420,15 @@ void main() {
     expect(room.voiceMuted, isTrue);
     expect(audio.mic, isFalse);
   });
+
+  test('another person speaking moves their picture with the voice', () async {
+    final relay = FakeRelay();
+    final room = buildRoom(relay: relay);
+    await enter(room, relay, 'Eric');
+    relay.emit(const TalkEvent('alex0001', 'Alex', true));
+    relay.emit(AudioEvent(tone(2400, 14000)));
+    expect(room.speakerName, 'Alex');
+    expect(room.voice.value.bass, greaterThan(0.4));
+    expect(room.voice.value.quiet, isFalse);
+  });
 }

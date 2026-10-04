@@ -11,6 +11,7 @@ import 'relay.dart';
 import 'room_store.dart';
 import 'talk_settings.dart';
 import 'voice_gate.dart';
+import 'voice_tone.dart';
 
 enum RoomPhase { needName, connecting, live, left }
 
@@ -37,6 +38,12 @@ class RoomController extends ChangeNotifier {
   final RoomStore rooms;
   final Scheduler schedule;
   final VoiceGate _gate = VoiceGate();
+  final VoiceToneMeter _meter = VoiceToneMeter();
+  final ValueNotifier<VoiceTone> voice = ValueNotifier<VoiceTone>(
+    VoiceTone.silent,
+  );
+  Cancel? _decay;
+  DateTime _heard = DateTime.fromMillisecondsSinceEpoch(0);
 
   RoomPhase phase = RoomPhase.needName;
   String? selfId;
@@ -427,7 +434,10 @@ class RoomController extends ChangeNotifier {
         notifyListeners();
         _kickMic();
       case AudioEvent():
-        if (_listeningTo != null) audio.play(event.pcm);
+        if (_listeningTo != null) {
+          _hear(event.pcm);
+          audio.play(event.pcm);
+        }
       case ErrorEvent():
         banner = switch (event.code) {
           'full' => 'That room is full.',
@@ -606,8 +616,45 @@ class RoomController extends ChangeNotifier {
 
   void _send(Uint8List pcm) {
     for (final frame in pcmFrames(pcm)) {
-      relay.audio(Uint8List.fromList(frame));
+      final copy = Uint8List.fromList(frame);
+      relay.audio(copy);
+      _hear(copy);
     }
+  }
+
+  void _hear(Uint8List pcm) {
+    _heard = DateTime.now();
+    _setTone(_meter.push(pcm));
+    _armDecay();
+  }
+
+  void _armDecay() {
+    if (_decay != null || _closed) return;
+    _decay = schedule(const Duration(milliseconds: 50), _decayStep);
+  }
+
+  void _decayStep() {
+    _decay = null;
+    if (_closed) return;
+    final age = DateTime.now().difference(_heard);
+    if (age < const Duration(milliseconds: 70)) {
+      _armDecay();
+      return;
+    }
+    _setTone(_meter.release());
+    if (!_meter.tone.quiet) _armDecay();
+  }
+
+  void _setTone(VoiceTone next) {
+    if (next == voice.value) return;
+    voice.value = next;
+  }
+
+  void _quiet() {
+    _decay?.call();
+    _decay = null;
+    _meter.reset();
+    _setTone(VoiceTone.silent);
   }
 
   void _trimPending() {
@@ -622,6 +669,7 @@ class RoomController extends ChangeNotifier {
   }
 
   void _applySpeaker(String? id, String? speaker) {
+    if (id != speakerId) _quiet();
     speakerId = id;
     speakerName = speaker;
     if (id == null || id == selfId) {
@@ -645,6 +693,7 @@ class RoomController extends ChangeNotifier {
   }
 
   void _dropLocalFloor() {
+    _quiet();
     _wantFloor = false;
     _haveFloor = false;
     holding = false;
@@ -700,6 +749,8 @@ class RoomController extends ChangeNotifier {
     joined = false;
     _gen += 1;
     _pending?.call();
+    _decay?.call();
+    voice.dispose();
     unawaited(relay.close());
     unawaited(audio.dispose());
     unawaited(alerts.stop());

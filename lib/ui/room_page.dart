@@ -2,11 +2,14 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../portrait.dart';
 import '../protocol.dart';
 import '../room_controller.dart';
 import '../talk_settings.dart';
 import '../theme.dart';
+import '../voice_tone.dart';
 import 'ptt_button.dart';
+import 'speaker_stage.dart';
 
 class RoomPage extends StatelessWidget {
   const RoomPage({super.key, required this.room});
@@ -27,7 +30,37 @@ class RoomPage extends StatelessWidget {
               _Header(live: live, roomName: room.roomName),
               const SizedBox(height: 14),
               Expanded(
-                child: Center(child: _MembersButton(room: room)),
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final rowHeight = math.min(
+                      68.0,
+                      constraints.maxHeight * 0.22,
+                    );
+                    final showFaces = rowHeight >= 40 && room.people.isNotEmpty;
+                    return Column(
+                      children: [
+                        Expanded(
+                          child: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                _MembersButton(room: room),
+                                const SizedBox(height: 4),
+                                SpeakerStage(room: room),
+                              ],
+                            ),
+                          ),
+                        ),
+                        if (showFaces)
+                          SizedBox(
+                            height: rowHeight,
+                            child: _FaceRow(room: room),
+                          ),
+                      ],
+                    );
+                  },
+                ),
               ),
               const SizedBox(height: 8),
               _TalkControls(room: room),
@@ -229,6 +262,99 @@ class _TalkControls extends StatelessWidget {
   }
 }
 
+class _FaceRow extends StatelessWidget {
+  const _FaceRow({required this.room});
+
+  final RoomController room;
+
+  @override
+  Widget build(BuildContext context) {
+    final people = room.people;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        const gap = 10.0;
+        const slot = 56.0;
+        final width = people.length * slot + (people.length - 1) * gap;
+        final faces = <Widget>[
+          for (var index = 0; index < people.length; index++)
+            Semantics(
+              label: people[index].name,
+              child: _TalkingFace(
+                room: room,
+                person: people[index],
+                diameter: 46,
+              ),
+            ),
+        ];
+        if (width <= constraints.maxWidth) {
+          return Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              for (var index = 0; index < faces.length; index++) ...[
+                if (index > 0) const SizedBox(width: gap),
+                faces[index],
+              ],
+            ],
+          );
+        }
+        return ListView.separated(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.symmetric(horizontal: 4),
+          itemCount: faces.length,
+          separatorBuilder: (_, _) => const SizedBox(width: gap),
+          itemBuilder: (context, index) => Center(child: faces[index]),
+        );
+      },
+    );
+  }
+}
+
+class _TalkingFace extends StatelessWidget {
+  const _TalkingFace({
+    required this.room,
+    required this.person,
+    required this.diameter,
+  });
+
+  final RoomController room;
+  final Person person;
+  final double diameter;
+
+  bool get _active =>
+      person.id == room.speakerId ||
+      (room.selfTalking && person.id == room.selfId);
+
+  @override
+  Widget build(BuildContext context) {
+    final face = ProfileFace(id: person.id, diameter: diameter);
+    if (!_active) return _frame(face, false);
+    return VoiceBrush(
+      room: room,
+      builder: (context, tone) {
+        return Transform.scale(
+          scaleX: speakerScaleX(tone),
+          scaleY: speakerScaleY(tone),
+          child: _frame(face, true),
+        );
+      },
+    );
+  }
+
+  Widget _frame(Widget face, bool hot) {
+    return Container(
+      padding: const EdgeInsets.all(2),
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        border: Border.all(
+          color: hot ? ConnectColors.cyan : ConnectColors.line,
+          width: hot ? 2 : 1,
+        ),
+      ),
+      child: face,
+    );
+  }
+}
+
 class _MembersButton extends StatelessWidget {
   const _MembersButton({required this.room});
 
@@ -409,14 +535,7 @@ Widget _personTile(RoomController room, Person person) {
     ),
     child: Row(
       children: [
-        Container(
-          width: 10,
-          height: 10,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: talking ? ConnectColors.cyan : ConnectColors.line,
-          ),
-        ),
+        _TalkingFace(room: room, person: person, diameter: 42),
         const SizedBox(width: 12),
         Expanded(
           child: Text(

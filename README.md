@@ -14,14 +14,15 @@ The repo is public so a link works for friends. The release APK is the download.
 2. Install the APK from the GitHub release.
 3. Open Connect, type the name people should see, and join. You land in Everyone.
 4. Tap Rooms to create a room or join one a friend created. One person talks at a time in each room.
-5. The big number is how many people are in the room. Tap it to see who is there.
-6. Choose Hold or Voice. Hold means press the big button. Voice means just speak, and tap the button to mute.
-7. Noise cancelling is on. It uses the phone's noise suppressor, echo canceler, and automatic gain. Turn it off for the plain microphone.
-8. Minimize Connect while a game is open. It listens for your voice, so you can talk without holding the button. Opening Connect again uses the Hold or Voice choice you saved. Swiping Connect away leaves the room. This PC has to be awake.
+5. The big number is how many people are in the room. Tap it to see who is there. Each person has a picture, and it is the same picture on every phone.
+6. While someone talks, their picture grows and shrinks with their voice. Rings around it move like a speaker. A low voice pushes the picture out. A brighter voice pulls it in.
+7. Choose Hold or Voice. Hold means press the big button. Voice means just speak, and tap the button to mute.
+8. Noise cancelling is on. It uses the phone's noise suppressor, echo canceler, and automatic gain. Turn it off for the plain microphone.
+9. Minimize Connect while a game is open. It listens for your voice, so you can talk without holding the button. Opening Connect again uses the Hold or Voice choice you saved. Swiping Connect away leaves the room. This PC has to be awake.
 
 The game keeps its own sound while Connect is minimized. A loud game can still open the microphone, because noise cancelling then has no copy of the game audio to cancel.
 
-Sound is 48 kHz mono, the same rate on every phone. Install 1.1.0 or newer on each phone. The 1.0.0 build used 16 kHz and will not sound right next to this one. Creating a room needs 1.2.0 or newer. A 1.1.0 phone stays in Everyone. Talking while a game is in front needs 1.3.0. A 1.2.0 phone still talks at 48 kHz, and it keeps listening in the background, but it does not switch to voice detection when you minimize it.
+Sound is 48 kHz mono, the same rate on every phone. Install 1.1.0 or newer on each phone. The 1.0.0 build used 16 kHz and will not sound right next to this one. Creating a room needs 1.2.0 or newer. A 1.1.0 phone stays in Everyone. Talking while a game is in front needs 1.3.0 or newer. The talking picture needs 1.4.0. A 1.3.0 phone still talks at 48 kHz and listens when you minimize it, and it does not show the pictures.
 
 The name stays on the phone. There is no login.
 

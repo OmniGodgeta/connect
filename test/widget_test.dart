@@ -42,6 +42,7 @@ void main() {
 
     expect(find.text('2'), findsOneWidget);
     expect(find.text('members'), findsOneWidget);
+    expect(find.text('Eric'), findsOneWidget);
     expect(find.text('Alex'), findsNothing);
     expect(find.text('LIVE'), findsOneWidget);
 
@@ -49,7 +50,7 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
     expect(find.text('Members'), findsOneWidget);
-    expect(find.text('Eric'), findsOneWidget);
+    expect(find.text('Eric'), findsNWidgets(2));
     expect(find.text('Alex'), findsOneWidget);
     await tester.binding.handlePopRoute();
     await tester.pump();

@@ -4,7 +4,7 @@ Updated 2026-10-04. Start here, then `AGENTS.md`.
 
 ## What this is
 
-Android walkie-talkie. Package `com.shadowswords.connect`, version 1.3.0+4. No accounts. The first open asks for a display name (1–24 characters) and saves it on the phone with a stable id. Later opens join the last room, or Everyone. Rooms can be created from the Rooms button. Talk is either hold-to-talk or voice detection. Minimizing the app listens for speech so people can talk over a game. The member count opens the list. One speaker at a time in a room. Dark theme only. Audio is 48 kHz mono PCM16. Noise cancelling defaults on.
+Android walkie-talkie. Package `com.shadowswords.connect`, version 1.4.0+5. No accounts. The first open asks for a display name (1–24 characters) and saves it on the phone with a stable id. Later opens join the last room, or Everyone. Rooms can be created from the Rooms button. Talk is either hold-to-talk or voice detection. Minimizing the app listens for speech so people can talk over a game. The member count opens the list. Each person has a picture, and the picture of whoever is talking moves with their voice. One speaker at a time in a room. Dark theme only. Audio is 48 kHz mono PCM16. Noise cancelling defaults on.
 
 The relay is on this PC, localhost only. Phones reach it through Tailscale. It is not on the public internet and not on Funnel.
 
@@ -27,6 +27,8 @@ The relay is on this PC, localhost only. Phones reach it through Tailscale. It i
 - Same emulator, 1.2.0 debug build: the room opened as Eric in Everyone. Rooms showed Everyone with 1 person. Creating Cabin joined it. The list then showed Everyone empty and Cabin with 1 person. Tapping Everyone rejoined it. Speaker playback was still not heard (`-no-audio`).
 - 1.3.0: `flutter analyze` was clean and `flutter test` passed (17). The relay was not restarted.
 - Same emulator, 1.3.0 debug build: Everyone showed 2 members after a second person joined, and the names were not on the main screen. Tapping the number opened a Members list with Eric and Alex. Back closed the list and stayed in the room. Hold was selected, Home changed the notification to "Speak to talk in Everyone", and opening the app again showed "Hold to talk". The foreground service type was media playback and microphone. Speaker playback was still not heard (`-no-audio`).
+- 1.4.0: `flutter analyze` was clean and `flutter test` passed (21). The relay was not restarted.
+- Same emulator, 1.4.0 debug build: Eric's picture was in the room, with a smaller copy under the count. Alex joined with a different picture. While Alex held the floor on a low tone, the large picture became Alex, the rings around it brightened, and the screen said "Alex is talking". The member list showed both pictures. Speaker playback was still not heard (`-no-audio`).
 - `flutter build apk --release` produced `build/app/outputs/flutter-apk/app-release.apk` (about 49 MB). `apksigner` certificate SHA-256 matches `~/.config/connect/upload-keystore.jks` alias `connect` (`CN=Connect, OU=ShadowSwords, O=ShadowSwords, L=Toronto, ST=Ontario, C=CA`). The password is only in gitignored `android/key.properties`.
 - `flutter_pcm_sound` 3.3.3 hardcodes compileSdk 33. `android/build.gradle.kts` raises library modules to 36 with `finalizeDsl`. Do not set compileSdk in `afterEvaluate`; AGP 9 rejects that.
 
@@ -51,14 +53,21 @@ The relay is on this PC, localhost only. Phones reach it through Tailscale. It i
 - Android 14 and newer need the foreground service type `mediaPlayback|microphone`, and the microphone permission, or the mic stops when the activity is not in front. The first start stays playback-only until that permission is granted.
 - The big number is the people in the room. Tapping it opens the list. 1.2.0 still talks at 48 kHz and can use named rooms. It does not switch to voice detection when minimized.
 
+## Pictures (1.4.0)
+
+- The picture is painted from the person's id. Changing their name does not change the face. Every 1.4.0 phone draws the same face for the same person. Nothing is uploaded, and the relay is unchanged.
+- The room shows that picture large, with the other people as smaller pictures along the bottom. The member list shows them too.
+- While someone is talking, their picture grows with the low part of the voice and pulls in a little on a brighter tone. Cyan rings around it move with the same sound. Your own picture does this while you hold the floor. Theirs does it from the audio you hear.
+- A 1.3.0 phone still talks at 48 kHz and listens when minimized. It does not show the pictures.
+
 ## Not checked on a phone
 
-No physical device was attached. A real two-phone test is still for the operator: Tailscale connected on each phone, this PC awake, 1.3.0 on each phone that should talk over a game (1.2.0 still talks at 48 kHz and can create rooms, 1.1.0 can still talk inside Everyone), hold to talk and voice detection, noise cancelling on and off, create a room and have the other phone join it, the other phone hears it, minimize onto a game and speak, swipe-away leaves the room.
+No physical device was attached. A real two-phone test is still for the operator: Tailscale connected on each phone, this PC awake, 1.4.0 on each phone that should see the talking picture (1.3.0 still talks at 48 kHz and listens when minimized, 1.2.0 can create rooms, 1.1.0 can still talk inside Everyone), hold to talk and voice detection, noise cancelling on and off, create a room and have the other phone join it, the other phone hears it, the picture moves while they speak, minimize onto a game and speak, swipe-away leaves the room.
 
 ## Operator steps
 
 1. Invite any friend who is not already on tailnet `tail51f9d6.ts.net`.
-2. Send the public GitHub release link for the 1.3.0 APK. Voice while a game is in front needs this build. A 1.2.0 phone still talks at 48 kHz and can create rooms, but it does not switch to voice detection when minimized. A 1.0.0 phone plays 48 kHz audio at the wrong speed. A 1.1.0 phone can still talk in Everyone. A private repo link would 404 unless they are collaborators, which is why the repo is public. The relay stays tailnet-only.
+2. Send the public GitHub release link for the 1.4.0 APK. The talking picture needs this build. A 1.3.0 phone still talks at 48 kHz and listens when minimized, and it does not show the pictures. A 1.2.0 phone can create rooms. A 1.0.0 phone plays 48 kHz audio at the wrong speed. A 1.1.0 phone can still talk in Everyone. A private repo link would 404 unless they are collaborators, which is why the repo is public. The relay stays tailnet-only.
 3. On the phone: install the APK, connect Tailscale, open Connect, enter a name.
 4. Keep this PC awake while people are in the room.
 
