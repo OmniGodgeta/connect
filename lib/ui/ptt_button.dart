@@ -27,7 +27,8 @@ class PttButton extends StatefulWidget {
   State<PttButton> createState() => _PttButtonState();
 }
 
-class _PttButtonState extends State<PttButton> with SingleTickerProviderStateMixin {
+class _PttButtonState extends State<PttButton>
+    with SingleTickerProviderStateMixin {
   late final AnimationController _rings = AnimationController(
     vsync: this,
     duration: const Duration(milliseconds: 1800),
@@ -74,7 +75,10 @@ class _PttButtonState extends State<PttButton> with SingleTickerProviderStateMix
             builder: (context, _) {
               return CustomPaint(
                 size: Size.square(outer),
-                painter: _RingPainter(progress: _rings.value, active: widget.active),
+                painter: _RingPainter(
+                  progress: _rings.value,
+                  active: widget.active,
+                ),
               );
             },
           ),
@@ -89,14 +93,22 @@ class _PttButtonState extends State<PttButton> with SingleTickerProviderStateMix
               height: widget.diameter,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: widget.self ? const Color(0xFF14586A) : ConnectColors.disc,
+                color: widget.self
+                    ? const Color(0xFF14586A)
+                    : ConnectColors.disc,
                 border: Border.all(
-                  color: widget.self || widget.active ? ConnectColors.cyan : ConnectColors.line,
+                  color: widget.self || widget.active
+                      ? ConnectColors.cyan
+                      : ConnectColors.line,
                   width: widget.self ? 3 : 2,
                 ),
                 boxShadow: widget.self
                     ? const [
-                        BoxShadow(color: Color(0x733EE7F5), blurRadius: 28, spreadRadius: 2),
+                        BoxShadow(
+                          color: Color(0x733EE7F5),
+                          blurRadius: 28,
+                          spreadRadius: 2,
+                        ),
                       ]
                     : null,
               ),
@@ -163,7 +175,11 @@ class _RadioGlyphPainter extends CustomPainter {
     canvas.drawRRect(rect, body);
     canvas.drawRRect(
       RRect.fromRectAndRadius(
-        Rect.fromCenter(center: Offset(w / 2, h * 0.30), width: w * 0.07, height: h * 0.16),
+        Rect.fromCenter(
+          center: Offset(w / 2, h * 0.30),
+          width: w * 0.07,
+          height: h * 0.16,
+        ),
         Radius.circular(8),
       ),
       body,

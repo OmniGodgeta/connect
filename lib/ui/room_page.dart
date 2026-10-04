@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../protocol.dart';
 import '../room_controller.dart';
+import '../talk_settings.dart';
 import '../theme.dart';
 import 'ptt_button.dart';
 
@@ -27,11 +28,15 @@ class RoomPage extends StatelessWidget {
               const SizedBox(height: 14),
               Expanded(child: _Roster(room: room)),
               const SizedBox(height: 8),
+              _TalkControls(room: room),
+              const SizedBox(height: 8),
               Text(
                 room.statusLine,
                 textAlign: TextAlign.center,
                 style: TextStyle(
-                  color: room.selfTalking || someoneElse ? ConnectColors.cyan : ConnectColors.muted,
+                  color: room.selfTalking || someoneElse
+                      ? ConnectColors.cyan
+                      : ConnectColors.muted,
                   fontSize: 16,
                   fontWeight: FontWeight.w600,
                 ),
@@ -39,17 +44,22 @@ class RoomPage extends StatelessWidget {
               const SizedBox(height: 12),
               LayoutBuilder(
                 builder: (context, constraints) {
-                  final diameter = math.min(constraints.maxWidth * 0.58, 210.0);
+                  final diameter = math.min(constraints.maxWidth * 0.5, 180.0);
+                  final hold = room.mode == TalkMode.hold;
                   return PttButton(
                     diameter: diameter,
                     enabled: live,
                     active: room.selfTalking || someoneElse,
                     self: room.selfTalking,
                     onDown: () {
-                      room.hold();
+                      if (hold) {
+                        room.hold();
+                      } else {
+                        room.toggleVoiceMute();
+                      }
                     },
                     onUp: () {
-                      room.release();
+                      if (hold) room.release();
                     },
                   );
                 },
@@ -66,7 +76,10 @@ class RoomPage extends StatelessWidget {
                     onPressed: () {
                       room.leave();
                     },
-                    child: const Text('Leave', style: TextStyle(color: ConnectColors.warn)),
+                    child: const Text(
+                      'Leave',
+                      style: TextStyle(color: ConnectColors.warn),
+                    ),
                   ),
                 ],
               ),
@@ -105,7 +118,11 @@ class LeftPage extends StatelessWidget {
               const Spacer(),
               ClipRRect(
                 borderRadius: BorderRadius.circular(28),
-                child: Image.asset('assets/brand/icon.png', width: 96, height: 96),
+                child: Image.asset(
+                  'assets/brand/icon.png',
+                  width: 96,
+                  height: 96,
+                ),
               ),
               const SizedBox(height: 24),
               const Text(
@@ -119,12 +136,83 @@ class LeftPage extends StatelessWidget {
                 style: TextStyle(color: ConnectColors.muted, fontSize: 15),
               ),
               const SizedBox(height: 28),
-              FilledButton(onPressed: onJoin, child: const Text('Join the room')),
+              FilledButton(
+                onPressed: onJoin,
+                child: const Text('Join the room'),
+              ),
               const Spacer(),
             ],
           ),
         ),
       ),
+    );
+  }
+}
+
+class _TalkControls extends StatelessWidget {
+  const _TalkControls({required this.room});
+
+  final RoomController room;
+
+  @override
+  Widget build(BuildContext context) {
+    final hold = room.mode == TalkMode.hold;
+    return Column(
+      children: [
+        SegmentedButton<TalkMode>(
+          key: const Key('talk-mode'),
+          showSelectedIcon: false,
+          style: ButtonStyle(
+            visualDensity: VisualDensity.compact,
+            backgroundColor: WidgetStateProperty.resolveWith((states) {
+              if (states.contains(WidgetState.selected))
+                return const Color(0xFF14586A);
+              return ConnectColors.tile;
+            }),
+            foregroundColor: WidgetStateProperty.all(ConnectColors.text),
+            side: WidgetStateProperty.all(
+              const BorderSide(color: ConnectColors.line),
+            ),
+          ),
+          segments: const [
+            ButtonSegment(value: TalkMode.hold, label: Text('Hold')),
+            ButtonSegment(value: TalkMode.voice, label: Text('Voice')),
+          ],
+          selected: {room.mode},
+          onSelectionChanged: (next) {
+            room.setMode(next.first);
+          },
+        ),
+        const SizedBox(height: 4),
+        Row(
+          children: [
+            const Expanded(
+              child: Text(
+                'Noise cancelling',
+                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+              ),
+            ),
+            Switch(
+              key: const Key('noise-cancel'),
+              value: room.noiseCancel,
+              onChanged: room.setNoiseCancel,
+            ),
+          ],
+        ),
+        Text(
+          hold
+              ? 'Press and hold the button. Noise cancelling cleans the mic.'
+              : room.voiceMuted
+              ? 'Tap the button to listen for your voice again.'
+              : 'Just speak. Tap the button to mute.',
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            color: ConnectColors.muted,
+            fontSize: 12,
+            height: 1.3,
+          ),
+        ),
+      ],
     );
   }
 }
@@ -153,7 +241,13 @@ class _Header extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 2),
-              Text(line, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w600)),
+              Text(
+                line,
+                style: const TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
             ],
           ),
         ),
@@ -162,7 +256,9 @@ class _Header extends StatelessWidget {
           decoration: BoxDecoration(
             color: live ? const Color(0x223EE7F5) : ConnectColors.tile,
             borderRadius: BorderRadius.circular(999),
-            border: Border.all(color: live ? ConnectColors.cyan : ConnectColors.line),
+            border: Border.all(
+              color: live ? ConnectColors.cyan : ConnectColors.line,
+            ),
           ),
           child: Text(
             live ? 'LIVE' : 'LINKING',
@@ -194,47 +290,58 @@ class _Roster extends StatelessWidget {
         ),
       );
     }
-    return ListView.separated(
-      itemCount: room.people.length,
-      separatorBuilder: (_, _) => const SizedBox(height: 8),
-      itemBuilder: (context, index) {
-        final person = room.people[index];
-        final talking = person.id == room.speakerId;
-        final mine = person.id == room.selfId;
-        return Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-          decoration: BoxDecoration(
-            color: talking ? const Color(0xFF123844) : ConnectColors.tile,
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(
-              color: talking ? ConnectColors.cyan.withValues(alpha: 0.8) : ConnectColors.line,
+    return SingleChildScrollView(
+      child: Column(
+        children: [
+          for (var index = 0; index < room.people.length; index++) ...[
+            if (index > 0) const SizedBox(height: 8),
+            _personTile(room, room.people[index]),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _personTile(RoomController room, Person person) {
+    final talking = person.id == room.speakerId;
+    final mine = person.id == room.selfId;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: talking ? const Color(0xFF123844) : ConnectColors.tile,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: talking
+              ? ConnectColors.cyan.withValues(alpha: 0.8)
+              : ConnectColors.line,
+        ),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 10,
+            height: 10,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: talking ? ConnectColors.cyan : ConnectColors.line,
             ),
           ),
-          child: Row(
-            children: [
-              Container(
-                width: 10,
-                height: 10,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: talking ? ConnectColors.cyan : ConnectColors.line,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  person.name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600),
-                ),
-              ),
-              if (mine)
-                const Text('you', style: TextStyle(color: ConnectColors.muted, fontSize: 13)),
-            ],
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              person.name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600),
+            ),
           ),
-        );
-      },
+          if (mine)
+            const Text(
+              'you',
+              style: TextStyle(color: ConnectColors.muted, fontSize: 13),
+            ),
+        ],
+      ),
     );
   }
 }
@@ -249,7 +356,9 @@ class _RenameDialog extends StatefulWidget {
 }
 
 class _RenameDialogState extends State<_RenameDialog> {
-  late final TextEditingController _name = TextEditingController(text: widget.initial);
+  late final TextEditingController _name = TextEditingController(
+    text: widget.initial,
+  );
   String? _error;
 
   @override
@@ -285,7 +394,10 @@ class _RenameDialogState extends State<_RenameDialog> {
         ),
       ),
       actions: [
-        TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
         TextButton(onPressed: _save, child: const Text('Save')),
       ],
     );

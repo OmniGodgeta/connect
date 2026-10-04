@@ -7,6 +7,7 @@ import 'audio_io.dart';
 import 'name_store.dart';
 import 'relay.dart';
 import 'room_controller.dart';
+import 'talk_settings.dart';
 import 'theme.dart';
 import 'ui/name_page.dart';
 import 'ui/room_page.dart';
@@ -26,6 +27,7 @@ Future<void> main() async {
     relay: SocketRelay(),
     audio: DeviceAudio(),
     names: PrefsNameStore(prefs),
+    settings: PrefsTalkSettings(prefs),
     alerts: PlatformAlerts(),
   );
   runApp(ConnectApp(controller: controller));
@@ -63,7 +65,10 @@ class _ConnectAppState extends State<ConnectApp> {
   Widget build(BuildContext context) {
     final room = widget.controller;
     final Widget home = switch (room.phase) {
-      RoomPhase.needName => NamePage(onSubmit: room.setName, error: room.banner),
+      RoomPhase.needName => NamePage(
+        onSubmit: room.setName,
+        error: room.banner,
+      ),
       RoomPhase.left => LeftPage(
         onJoin: () {
           room.join();

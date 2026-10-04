@@ -44,6 +44,12 @@ void main() {
     expect(find.text('Alex'), findsOneWidget);
     expect(find.text('2 people in the room'), findsOneWidget);
     expect(find.text('LIVE'), findsOneWidget);
+    expect(find.text('Noise cancelling'), findsOneWidget);
+    expect(find.text('Hold'), findsOneWidget);
     expect(find.byKey(const Key('ptt')), findsOneWidget);
+
+    await tester.tap(find.text('Voice'));
+    await tester.pump();
+    expect(find.text('Listening for your voice'), findsOneWidget);
   });
 }

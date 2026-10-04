@@ -93,14 +93,20 @@ class _NamePageState extends State<NamePage> {
                   filled: true,
                   fillColor: ConnectColors.tile,
                   errorText: error,
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 18),
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 18,
+                    vertical: 18,
+                  ),
                   enabledBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(16),
                     borderSide: const BorderSide(color: ConnectColors.line),
                   ),
                   focusedBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(16),
-                    borderSide: const BorderSide(color: ConnectColors.cyan, width: 1.6),
+                    borderSide: const BorderSide(
+                      color: ConnectColors.cyan,
+                      width: 1.6,
+                    ),
                   ),
                   errorBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(16),
@@ -108,7 +114,10 @@ class _NamePageState extends State<NamePage> {
                   ),
                   focusedErrorBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(16),
-                    borderSide: const BorderSide(color: ConnectColors.warn, width: 1.6),
+                    borderSide: const BorderSide(
+                      color: ConnectColors.warn,
+                      width: 1.6,
+                    ),
                   ),
                 ),
               ),
@@ -122,7 +131,11 @@ class _NamePageState extends State<NamePage> {
               const Text(
                 'People on your Tailscale network hear you when you hold the button.',
                 textAlign: TextAlign.center,
-                style: TextStyle(color: ConnectColors.muted, fontSize: 13, height: 1.4),
+                style: TextStyle(
+                  color: ConnectColors.muted,
+                  fontSize: 13,
+                  height: 1.4,
+                ),
               ),
               const Spacer(flex: 2),
             ],

@@ -1,6 +1,6 @@
 # Connect
 
-One room. Hold the button to talk. No accounts.
+One room. Hold the button, or just speak. No accounts.
 
 Connect is an Android walkie-talkie for people already on this Tailscale network (`tail51f9d6.ts.net`). Opening the app joins the only room. The relay runs on this PC and is published with `tailscale serve`, so it is not on the public internet. A phone still needs the Tailscale app connected, or it cannot reach the room.
 
@@ -13,8 +13,11 @@ The repo is public so a link works for friends. The release APK is the download.
 1. Install [Tailscale](https://tailscale.com/download) and join this tailnet. The owner invites the phone.
 2. Install the APK from the GitHub release.
 3. Open Connect, type the name people should see, and join.
-4. Hold the big button to talk. Let go to listen. One person talks at a time.
-5. Leave the app in the background to keep hearing the room. Swiping it away leaves the room. This PC has to be awake.
+4. Choose Hold or Voice. Hold means press the big button. Voice means just speak, and tap the button to mute. One person talks at a time.
+5. Noise cancelling is on. It uses the phone's noise suppressor, echo canceler, and automatic gain. Turn it off for the plain microphone.
+6. Leave the app in the background to keep hearing the room. Swiping it away leaves the room. This PC has to be awake.
+
+Sound is 48 kHz mono, the same rate on every phone. Install 1.1.0 or newer on each phone. The 1.0.0 build used 16 kHz and will not sound right next to this one.
 
 The name stays on the phone. There is no login.
 

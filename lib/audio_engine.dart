@@ -4,7 +4,12 @@ import 'dart:typed_data';
 abstract class AudioEngine {
   Future<bool> ensureMic();
 
-  Future<void> startMic(void Function(Uint8List chunk) onChunk);
+  /// [noiseCancel] turns on the platform noise suppressor, echo canceler,
+  /// and automatic gain. Off captures the mic with those effects disabled.
+  Future<void> startMic(
+    void Function(Uint8List chunk) onChunk, {
+    required bool noiseCancel,
+  });
 
   Future<void> stopMic();
 

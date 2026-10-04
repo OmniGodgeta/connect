@@ -25,23 +25,43 @@ class DeviceAudio implements AudioEngine {
   }
 
   @override
-  Future<void> startMic(void Function(Uint8List chunk) onChunk) async {
+  Future<void> startMic(
+    void Function(Uint8List chunk) onChunk, {
+    required bool noiseCancel,
+  }) async {
     await stopMic();
-    final stream = await _recorder.startStream(
-      const RecordConfig(
-        encoder: AudioEncoder.pcm16bits,
-        sampleRate: ConnectConfig.sampleRate,
-        numChannels: 1,
-        autoGain: true,
-        echoCancel: true,
-        noiseSuppress: true,
-        streamBufferSize: 1280,
-        androidConfig: AndroidRecordConfig(
-          audioSource: AndroidAudioSource.voiceCommunication,
-        ),
+    final stream = await _start(noiseCancel);
+    _mic = stream.listen(onChunk);
+  }
+
+  Future<Stream<Uint8List>> _start(bool noiseCancel) async {
+    try {
+      return await _recorder.startStream(_config(noiseCancel));
+    } catch (_) {
+      if (!noiseCancel) rethrow;
+      // Some phones reject the voice-communication path. The plain mic still talks.
+      return _recorder.startStream(_config(false));
+    }
+  }
+
+  RecordConfig _config(bool noiseCancel) {
+    return RecordConfig(
+      encoder: AudioEncoder.pcm16bits,
+      sampleRate: ConnectConfig.sampleRate,
+      numChannels: 1,
+      autoGain: noiseCancel,
+      echoCancel: noiseCancel,
+      noiseSuppress: noiseCancel,
+      androidConfig: AndroidRecordConfig(
+        audioSource: noiseCancel
+            ? AndroidAudioSource.voiceCommunication
+            : AndroidAudioSource.mic,
+        audioManagerMode: noiseCancel
+            ? AudioManagerMode.modeInCommunication
+            : AudioManagerMode.modeNormal,
+        speakerphone: noiseCancel,
       ),
     );
-    _mic = stream.listen(onChunk);
   }
 
   @override
@@ -79,15 +99,16 @@ class DeviceAudio implements AudioEngine {
     for (var i = 0; i < end; i += 2) {
       _samples.add(data.getInt16(i, Endian.little));
     }
-    final cap = ConnectConfig.sampleRate * 2;
+    final cap = ConnectConfig.sampleRate;
     if (_samples.length > cap) {
-      _samples.removeRange(0, _samples.length - ConnectConfig.sampleRate);
+      _samples.removeRange(0, _samples.length - ConnectConfig.sampleRate ~/ 2);
     }
   }
 
   void _onFeed(int remaining) {
     if (!_listening || _samples.isEmpty) return;
-    final count = _samples.length < 1600 ? _samples.length : 1600;
+    final budget = ConnectConfig.sampleRate ~/ 10;
+    final count = _samples.length < budget ? _samples.length : budget;
     final chunk = _samples.sublist(0, count);
     _samples.removeRange(0, count);
     FlutterPcmSound.feed(PcmArrayInt16.fromList(chunk));

@@ -98,11 +98,18 @@ RelayEvent? parseEvent(String raw) {
       final name = decoded['name'];
       if (id is String && name is String) return WelcomeEvent(id, name);
     case 'roster':
-      return RosterEvent(_people(decoded['people']), _string(decoded['speaker']));
+      return RosterEvent(
+        _people(decoded['people']),
+        _string(decoded['speaker']),
+      );
     case 'floor':
       final ok = decoded['ok'];
       if (ok is bool) {
-        return FloorEvent(ok, _string(decoded['by']), reason: _string(decoded['reason']));
+        return FloorEvent(
+          ok,
+          _string(decoded['by']),
+          reason: _string(decoded['reason']),
+        );
       }
     case 'talk':
       final id = decoded['id'];

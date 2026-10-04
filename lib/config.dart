@@ -9,5 +9,10 @@ abstract final class ConnectConfig {
   );
 
   /// Signed 16-bit little-endian mono PCM. Both phones use this rate.
-  static const sampleRate = 16000;
+  /// 48 kHz is full-band: the mic's own ceiling, with no codec in the path.
+  static const sampleRate = 48000;
+
+  /// One network frame is 40 ms. Short enough to stay under the relay cap,
+  /// long enough that a phone is not flooding the socket.
+  static const frameBytes = 3840;
 }

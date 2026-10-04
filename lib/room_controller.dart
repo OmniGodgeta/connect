@@ -4,9 +4,12 @@ import 'package:flutter/foundation.dart';
 
 import 'alerts.dart';
 import 'audio_engine.dart';
+import 'config.dart';
 import 'name_store.dart';
 import 'protocol.dart';
 import 'relay.dart';
+import 'talk_settings.dart';
+import 'voice_gate.dart';
 
 enum RoomPhase { needName, connecting, live, left }
 
@@ -19,14 +22,17 @@ class RoomController extends ChangeNotifier {
     required this.audio,
     required this.names,
     required this.alerts,
+    TalkSettingsStore? settings,
     this.schedule = _timer,
-  });
+  }) : settings = settings ?? MemoryTalkSettings();
 
   final Relay relay;
   final AudioEngine audio;
   final NameStore names;
   final RoomAlerts alerts;
+  final TalkSettingsStore settings;
   final Scheduler schedule;
+  final VoiceGate _gate = VoiceGate();
 
   RoomPhase phase = RoomPhase.needName;
   String? selfId;
@@ -37,6 +43,9 @@ class RoomController extends ChangeNotifier {
   String? banner;
   bool holding = false;
   bool micDenied = false;
+  TalkMode mode = TalkMode.hold;
+  bool noiseCancel = true;
+  bool voiceMuted = false;
 
   bool joined = false;
   bool _haveFloor = false;
@@ -49,6 +58,8 @@ class RoomController extends ChangeNotifier {
   int _micToken = 0;
   String? _listeningTo;
   Cancel? _pending;
+  bool? _openNoise;
+  final List<Uint8List> _pendingAudio = <Uint8List>[];
 
   bool get selfTalking => _haveFloor;
   bool get waitingForFloor => holding && !_haveFloor;
@@ -67,6 +78,9 @@ class RoomController extends ChangeNotifier {
       return '$speakerName is talking';
     }
     if (banner != null) return banner!;
+    if (mode == TalkMode.voice) {
+      return voiceMuted ? 'Voice is muted' : 'Listening for your voice';
+    }
     return 'Hold to talk';
   }
 
@@ -84,7 +98,10 @@ class RoomController extends ChangeNotifier {
 
   Future<void> boot() async {
     final saved = await names.load();
+    final talk = await settings.load();
     if (_closed) return;
+    mode = talk.mode;
+    noiseCancel = talk.noiseCancel;
     selfId = saved.id ?? newId();
     name = saved.name;
     if (name == null) {
@@ -134,8 +151,8 @@ class RoomController extends ChangeNotifier {
     _gen += 1;
     _pending?.call();
     _pending = null;
-    _dropLocalFloor();
     phase = RoomPhase.left;
+    _dropLocalFloor();
     people = const [];
     speakerId = null;
     speakerName = null;
@@ -148,7 +165,54 @@ class RoomController extends ChangeNotifier {
     if (!_closed) notifyListeners();
   }
 
+  Future<void> setMode(TalkMode next) async {
+    if (mode == next || _closed) return;
+    if (_wantFloor || _haveFloor) {
+      _wantFloor = false;
+      _haveFloor = false;
+      holding = false;
+      if (phase == RoomPhase.live) relay.ptt(false);
+    }
+    _gate.reset();
+    _pendingAudio.clear();
+    mode = next;
+    voiceMuted = false;
+    banner = null;
+    await _saveTalk();
+    if (!_closed) notifyListeners();
+    await _kickMic();
+  }
+
+  Future<void> setNoiseCancel(bool on) async {
+    if (noiseCancel == on || _closed) return;
+    noiseCancel = on;
+    await _saveTalk();
+    if (!_closed) notifyListeners();
+    await _kickMic();
+  }
+
+  Future<void> toggleVoiceMute() async {
+    if (mode != TalkMode.voice || _closed) return;
+    voiceMuted = !voiceMuted;
+    if (voiceMuted && (_wantFloor || _haveFloor)) {
+      _wantFloor = false;
+      _haveFloor = false;
+      holding = false;
+      if (phase == RoomPhase.live) relay.ptt(false);
+    }
+    _gate.reset();
+    _pendingAudio.clear();
+    banner = null;
+    notifyListeners();
+    await _kickMic();
+  }
+
+  Future<void> _saveTalk() {
+    return settings.save(TalkSettings(mode: mode, noiseCancel: noiseCancel));
+  }
+
   Future<void> hold() async {
+    if (mode != TalkMode.hold) return;
     if (phase != RoomPhase.live || _wantFloor || _haveFloor) return;
     _wantFloor = true;
     holding = true;
@@ -168,16 +232,14 @@ class RoomController extends ChangeNotifier {
   }
 
   Future<void> release() async {
+    if (mode != TalkMode.hold) return;
     if (!_wantFloor && !_haveFloor) return;
     _wantFloor = false;
     _haveFloor = false;
     holding = false;
-    _micToken += 1;
-    final stopMic = micOn;
-    micOn = false;
-    if (stopMic) await audio.stopMic();
     if (phase == RoomPhase.live && !_closed) relay.ptt(false);
     if (!_closed) notifyListeners();
+    await _kickMic();
   }
 
   bool micOn = false;
@@ -213,21 +275,30 @@ class RoomController extends ChangeNotifier {
         _attempt = 0;
         _pushNotification();
         notifyListeners();
+        _kickMic();
       case RosterEvent():
         people = event.people;
         _applySpeaker(event.speakerId, _nameFor(event.speakerId));
         if (phase == RoomPhase.live) _pushNotification();
         notifyListeners();
+        _kickMic();
       case FloorEvent():
         _onFloor(event);
       case TalkEvent():
         if (event.down) {
           _applySpeaker(event.id, event.name);
+          if (event.id != selfId) {
+            _gate.reset();
+            _pendingAudio.clear();
+            _wantFloor = false;
+            if (!_haveFloor) holding = false;
+          }
         } else if (speakerId == event.id) {
           _applySpeaker(null, null);
         }
         if (phase == RoomPhase.live) _pushNotification();
         notifyListeners();
+        _kickMic();
       case AudioEvent():
         if (_listeningTo != null) audio.play(event.pcm);
       case ErrorEvent():
@@ -245,19 +316,21 @@ class RoomController extends ChangeNotifier {
       _wantFloor = false;
       _haveFloor = false;
       holding = false;
-      _micToken += 1;
-      if (micOn) {
-        micOn = false;
-        unawaited(audio.stopMic());
-      }
+      _gate.reset();
+      _pendingAudio.clear();
       if (wanted) {
-        banner = event.reason == 'timeout'
-            ? 'Let go, then hold again.'
-            : (event.by == null || event.by!.isEmpty)
-            ? 'Someone else is talking.'
-            : '${event.by} is talking.';
+        if (event.reason == 'timeout') {
+          banner = mode == TalkMode.voice
+              ? 'Speak again in a moment.'
+              : 'Let go, then hold again.';
+        } else if (event.by == null || event.by!.isEmpty) {
+          banner = 'Someone else is talking.';
+        } else {
+          banner = '${event.by} is talking.';
+        }
       }
       notifyListeners();
+      _kickMic();
       return;
     }
     if (!_wantFloor) {
@@ -266,28 +339,132 @@ class RoomController extends ChangeNotifier {
     }
     _haveFloor = true;
     banner = null;
-    micOn = true;
     _listeningTo = null;
     unawaited(audio.stopPlay());
+    final queued = List<Uint8List>.of(_pendingAudio);
+    _pendingAudio.clear();
+    for (final chunk in queued) {
+      _send(chunk);
+    }
     notifyListeners();
-    unawaited(_openMic());
+    _kickMic();
   }
 
-  Future<void> _openMic() async {
-    final token = _micToken;
+  bool get _needMic {
+    if (phase != RoomPhase.live || _closed) return false;
+    if (mode == TalkMode.hold) return _haveFloor;
+    if (voiceMuted) return false;
+    if (speakerId != null && speakerId != selfId && !_haveFloor) return false;
+    return true;
+  }
+
+  Future<void>? _micJob;
+
+  Future<void> _kickMic() {
+    final previous = _micJob ?? Future<void>.value();
+    final next = previous.catchError((Object _) {}).then((_) => _syncMic());
+    _micJob = next.catchError((Object _) {});
+    return _micJob!;
+  }
+
+  Future<void> _syncMic() async {
+    final want = _needMic;
+    if (want && micOn && _openNoise == noiseCancel) return;
+    if (!want && !micOn) return;
+    final token = ++_micToken;
+    if (micOn) {
+      micOn = false;
+      _openNoise = null;
+      await audio.stopMic();
+    }
+    if (token != _micToken || _closed || !_needMic) return;
+    final allowed = await audio.ensureMic();
+    if (token != _micToken || _closed || !_needMic) return;
+    if (!allowed) {
+      micDenied = true;
+      banner = 'Allow the microphone to talk. You can still listen.';
+      if (mode == TalkMode.voice) voiceMuted = true;
+      notifyListeners();
+      return;
+    }
     try {
-      await audio.startMic((chunk) {
-        if (_haveFloor && token == _micToken) relay.audio(chunk);
-      });
+      await audio.startMic(
+        (chunk) => _onChunk(token, chunk),
+        noiseCancel: noiseCancel,
+      );
     } catch (_) {
       if (token != _micToken || _closed) return;
-      _haveFloor = false;
-      _wantFloor = false;
-      holding = false;
       micOn = false;
-      relay.ptt(false);
       banner = 'The microphone did not start.';
+      if (_haveFloor || _wantFloor) {
+        _haveFloor = false;
+        _wantFloor = false;
+        holding = false;
+        relay.ptt(false);
+      }
       notifyListeners();
+      return;
+    }
+    if (token != _micToken || !_needMic) {
+      await audio.stopMic();
+      return;
+    }
+    micOn = true;
+    _openNoise = noiseCancel;
+  }
+
+  void _onChunk(int token, Uint8List chunk) {
+    if (token != _micToken || _closed) return;
+    if (mode == TalkMode.hold) {
+      if (_haveFloor) _send(chunk);
+      return;
+    }
+    final decision = _gate.push(chunk);
+    if (decision.justOpened) {
+      _wantFloor = true;
+      holding = true;
+      banner = null;
+      _pendingAudio.addAll(decision.burst);
+      _trimPending();
+      relay.ptt(true);
+      notifyListeners();
+      return;
+    }
+    if (decision.open || decision.justClosed) {
+      if (_haveFloor) {
+        _send(chunk);
+      } else if (_wantFloor) {
+        _pendingAudio.add(Uint8List.fromList(chunk));
+        _trimPending();
+      }
+    }
+    if (decision.justClosed) _finishVoice();
+  }
+
+  void _finishVoice() {
+    final had = _wantFloor || _haveFloor;
+    _wantFloor = false;
+    _haveFloor = false;
+    holding = false;
+    _pendingAudio.clear();
+    if (had && phase == RoomPhase.live && !_closed) relay.ptt(false);
+    if (!_closed) notifyListeners();
+  }
+
+  void _send(Uint8List pcm) {
+    for (final frame in pcmFrames(pcm)) {
+      relay.audio(Uint8List.fromList(frame));
+    }
+  }
+
+  void _trimPending() {
+    var bytes = 0;
+    for (final chunk in _pendingAudio) {
+      bytes += chunk.length;
+    }
+    final cap = ConnectConfig.sampleRate * 2;
+    while (_pendingAudio.length > 1 && bytes > cap) {
+      bytes -= _pendingAudio.removeAt(0).length;
     }
   }
 
@@ -319,6 +496,9 @@ class RoomController extends ChangeNotifier {
     _haveFloor = false;
     holding = false;
     _micToken += 1;
+    _openNoise = null;
+    _gate.reset();
+    _pendingAudio.clear();
     _listeningTo = null;
     speakerId = null;
     speakerName = null;

@@ -37,7 +37,10 @@ class PrefsNameStore implements NameStore {
 
   @override
   Future<SavedIdentity> load() async {
-    return SavedIdentity(id: _prefs.getString(_idKey), name: _prefs.getString(_nameKey));
+    return SavedIdentity(
+      id: _prefs.getString(_idKey),
+      name: _prefs.getString(_nameKey),
+    );
   }
 
   @override

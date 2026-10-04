@@ -6,7 +6,16 @@ import 'package:connect/name_store.dart';
 import 'package:connect/protocol.dart';
 import 'package:connect/relay.dart';
 import 'package:connect/room_controller.dart';
+import 'package:connect/talk_settings.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+Uint8List tone(int samples, int amplitude) {
+  final data = ByteData(samples * 2);
+  for (var i = 0; i < samples; i++) {
+    data.setInt16(i * 2, amplitude, Endian.little);
+  }
+  return data.buffer.asUint8List();
+}
 
 class FakeRelay implements Relay {
   void Function(RelayEvent event)? onEvent;
@@ -42,9 +51,19 @@ class FakeAudio implements AudioEngine {
   @override
   Future<bool> ensureMic() async => allow;
 
+  void Function(Uint8List chunk)? onChunk;
+  bool? noise;
+  int starts = 0;
+
   @override
-  Future<void> startMic(void Function(Uint8List chunk) onChunk) async {
+  Future<void> startMic(
+    void Function(Uint8List chunk) onChunk, {
+    required bool noiseCancel,
+  }) async {
     mic = true;
+    starts += 1;
+    noise = noiseCancel;
+    this.onChunk = onChunk;
   }
 
   @override
@@ -87,12 +106,14 @@ RoomController buildRoom({
   FakeRelay? relay,
   FakeAudio? audio,
   FakeAlerts? alerts,
+  MemoryTalkSettings? settings,
   Scheduler? schedule,
 }) {
   return RoomController(
     relay: relay ?? FakeRelay(),
     audio: audio ?? FakeAudio(),
     names: names ?? MemoryNameStore(),
+    settings: settings,
     alerts: alerts ?? FakeAlerts(),
     schedule: schedule ?? (_, _) => () {},
   );
@@ -159,7 +180,9 @@ void main() {
   });
 
   test('a saved name joins on boot and a drop schedules a retry', () async {
-    final names = MemoryNameStore()..id = 'abc12345abc12345'..name = 'Eric';
+    final names = MemoryNameStore()
+      ..id = 'abc12345abc12345'
+      ..name = 'Eric';
     final relay = FakeRelay();
     late void Function() retry;
     final room = buildRoom(
@@ -180,5 +203,100 @@ void main() {
     retry();
     await pumpEventQueue();
     expect(relay.log.where((entry) => entry == 'connect').length, 2);
+  });
+
+  test(
+    'voice waits for the floor, then keeps the mic open after silence',
+    () async {
+      final relay = FakeRelay();
+      final audio = FakeAudio();
+      final names = MemoryNameStore()
+        ..id = 'abc12345abc12345'
+        ..name = 'Eric';
+      final settings = MemoryTalkSettings()
+        ..current = const TalkSettings(mode: TalkMode.voice);
+      final room = buildRoom(
+        names: names,
+        relay: relay,
+        audio: audio,
+        settings: settings,
+      );
+      await room.boot();
+      relay.emit(WelcomeEvent(room.selfId!, 'Eric'));
+      relay.emit(RosterEvent([Person(room.selfId!, 'Eric')], null));
+      await pumpEventQueue();
+      expect(audio.mic, isTrue);
+      expect(audio.noise, isTrue);
+      expect(room.statusLine, 'Listening for your voice');
+
+      audio.onChunk!(tone(8000, 8000));
+      expect(relay.log, contains('ptt:true'));
+      expect(relay.log.where((entry) => entry.startsWith('audio:')), isEmpty);
+
+      relay.emit(const FloorEvent(true, null));
+      await pumpEventQueue();
+      expect(
+        relay.log.where((entry) => entry.startsWith('audio:')),
+        isNotEmpty,
+      );
+      expect(room.selfTalking, isTrue);
+
+      audio.onChunk!(tone(48000, 0));
+      expect(relay.log, contains('ptt:false'));
+      expect(audio.mic, isTrue);
+      expect(room.selfTalking, isFalse);
+    },
+  );
+
+  test('someone else talking closes the voice mic', () async {
+    final relay = FakeRelay();
+    final audio = FakeAudio();
+    final names = MemoryNameStore()
+      ..id = 'abc12345abc12345'
+      ..name = 'Eric';
+    final settings = MemoryTalkSettings()
+      ..current = const TalkSettings(mode: TalkMode.voice);
+    final room = buildRoom(
+      names: names,
+      relay: relay,
+      audio: audio,
+      settings: settings,
+    );
+    await room.boot();
+    relay.emit(WelcomeEvent(room.selfId!, 'Eric'));
+    await pumpEventQueue();
+    expect(audio.mic, isTrue);
+
+    relay.emit(const TalkEvent('alex0001', 'Alex', true));
+    await pumpEventQueue();
+    expect(audio.mic, isFalse);
+    expect(room.statusLine, 'Alex is talking');
+  });
+
+  test('turning noise cancelling off reopens the mic without it', () async {
+    final relay = FakeRelay();
+    final audio = FakeAudio();
+    final names = MemoryNameStore()
+      ..id = 'abc12345abc12345'
+      ..name = 'Eric';
+    final settings = MemoryTalkSettings()
+      ..current = const TalkSettings(mode: TalkMode.voice);
+    final room = buildRoom(
+      names: names,
+      relay: relay,
+      audio: audio,
+      settings: settings,
+    );
+    await room.boot();
+    relay.emit(WelcomeEvent(room.selfId!, 'Eric'));
+    await pumpEventQueue();
+    expect(audio.noise, isTrue);
+    final starts = audio.starts;
+
+    await room.setNoiseCancel(false);
+    expect(audio.noise, isFalse);
+    expect(audio.mic, isTrue);
+    expect(audio.starts, starts + 1);
+    expect(settings.current.noiseCancel, isFalse);
   });
 }
