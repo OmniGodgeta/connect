@@ -40,10 +40,33 @@ void main() {
     );
     await tester.pump();
 
+    expect(find.text('2'), findsOneWidget);
+    expect(find.text('members'), findsOneWidget);
+    expect(find.text('Alex'), findsNothing);
+    expect(find.text('LIVE'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('members')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.text('Members'), findsOneWidget);
     expect(find.text('Eric'), findsOneWidget);
     expect(find.text('Alex'), findsOneWidget);
-    expect(find.text('2 people in the room'), findsOneWidget);
+    await tester.binding.handlePopRoute();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.text('Alex'), findsNothing);
     expect(find.text('LIVE'), findsOneWidget);
+
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    // A paused app stops normal frames. Force one so the status line rebuilds.
+    tester.binding.scheduleForcedFrame();
+    await tester.pump();
+    expect(room.statusLine, 'Listening for your voice');
+    expect(find.text('Listening for your voice'), findsOneWidget);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump();
+    expect(room.statusLine, 'Hold to talk');
+    expect(find.text('Hold to talk'), findsOneWidget);
     expect(find.text('Noise cancelling'), findsOneWidget);
     expect(find.text('Hold'), findsOneWidget);
     expect(find.byKey(const Key('ptt')), findsOneWidget);

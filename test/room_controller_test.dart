@@ -63,14 +63,18 @@ class FakeAudio implements AudioEngine {
   bool? noise;
   int starts = 0;
 
+  bool alongside = false;
+
   @override
   Future<void> startMic(
     void Function(Uint8List chunk) onChunk, {
     required bool noiseCancel,
+    bool alongside = false,
   }) async {
     mic = true;
     starts += 1;
     noise = noiseCancel;
+    this.alongside = alongside;
     this.onChunk = onChunk;
   }
 
@@ -349,5 +353,71 @@ void main() {
     expect(room.roomName, 'Cabin');
     expect(store.current, 'Cabin');
     expect(room.availableRooms.last.people, 1);
+  });
+
+  test('minimizing listens for voice and opening restores hold', () async {
+    final relay = FakeRelay();
+    final audio = FakeAudio();
+    final settings = MemoryTalkSettings();
+    final names = MemoryNameStore()
+      ..id = 'abc12345abc12345'
+      ..name = 'Eric';
+    final room = buildRoom(
+      names: names,
+      relay: relay,
+      audio: audio,
+      settings: settings,
+    );
+    await room.boot();
+    relay.emit(WelcomeEvent(room.selfId!, 'Eric', room: everyoneRoom));
+    relay.emit(RosterEvent([Person(room.selfId!, 'Eric')], null));
+    await pumpEventQueue();
+    expect(room.mode, TalkMode.hold);
+    expect(audio.mic, isFalse);
+
+    await room.enterBackground();
+    expect(room.inBackground, isTrue);
+    expect(room.mode, TalkMode.voice);
+    expect(room.voiceMuted, isFalse);
+    expect(audio.mic, isTrue);
+    expect(audio.alongside, isTrue);
+    expect(settings.current.mode, TalkMode.hold);
+
+    await room.leaveBackground();
+    expect(room.inBackground, isFalse);
+    expect(room.mode, TalkMode.hold);
+    expect(audio.mic, isFalse);
+    expect(settings.current.mode, TalkMode.hold);
+  });
+
+  test('minimizing unmutes voice and opening mutes it again', () async {
+    final relay = FakeRelay();
+    final audio = FakeAudio();
+    final settings = MemoryTalkSettings()
+      ..current = const TalkSettings(mode: TalkMode.voice);
+    final names = MemoryNameStore()
+      ..id = 'abc12345abc12345'
+      ..name = 'Eric';
+    final room = buildRoom(
+      names: names,
+      relay: relay,
+      audio: audio,
+      settings: settings,
+    );
+    await room.boot();
+    relay.emit(WelcomeEvent(room.selfId!, 'Eric', room: everyoneRoom));
+    await pumpEventQueue();
+    await room.toggleVoiceMute();
+    expect(room.voiceMuted, isTrue);
+    expect(audio.mic, isFalse);
+
+    await room.enterBackground();
+    expect(room.voiceMuted, isFalse);
+    expect(audio.mic, isTrue);
+
+    await room.leaveBackground();
+    expect(room.mode, TalkMode.voice);
+    expect(room.voiceMuted, isTrue);
+    expect(audio.mic, isFalse);
   });
 }

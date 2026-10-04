@@ -53,6 +53,9 @@ class RoomController extends ChangeNotifier {
   TalkMode mode = TalkMode.hold;
   bool noiseCancel = true;
   bool voiceMuted = false;
+  bool inBackground = false;
+  TalkMode? _frontMode;
+  bool _frontMute = false;
 
   bool joined = false;
   bool _haveFloor = false;
@@ -66,16 +69,11 @@ class RoomController extends ChangeNotifier {
   String? _listeningTo;
   Cancel? _pending;
   bool? _openNoise;
+  bool? _openAlongside;
   final List<Uint8List> _pendingAudio = <Uint8List>[];
 
   bool get selfTalking => _haveFloor;
   bool get waitingForFloor => holding && !_haveFloor;
-
-  String get peopleLine {
-    if (phase == RoomPhase.connecting && people.isEmpty) return 'Connecting';
-    if (people.length <= 1) return 'Just you in the room';
-    return '${people.length} people in the room';
-  }
 
   String get statusLine {
     if (phase == RoomPhase.connecting) return banner ?? 'Connecting…';
@@ -94,6 +92,9 @@ class RoomController extends ChangeNotifier {
   String _notificationText() {
     if (speakerId != null && speakerId != selfId && speakerName != null) {
       return '$speakerName is talking';
+    }
+    if (inBackground && mode == TalkMode.voice && !voiceMuted) {
+      return 'Speak to talk in $roomName';
     }
     return 'In $roomName';
   }
@@ -158,6 +159,8 @@ class RoomController extends ChangeNotifier {
   Future<void> leave() async {
     joined = false;
     picking = false;
+    inBackground = false;
+    _frontMode = null;
     _gen += 1;
     _pending?.call();
     _pending = null;
@@ -176,7 +179,15 @@ class RoomController extends ChangeNotifier {
   }
 
   Future<void> setMode(TalkMode next) async {
-    if (mode == next || _closed) return;
+    if (_closed) return;
+    if (inBackground) {
+      if (_frontMode == next) return;
+      _frontMode = next;
+      _frontMute = false;
+      await _saveTalk();
+      return;
+    }
+    if (mode == next) return;
     if (_wantFloor || _haveFloor) {
       _wantFloor = false;
       _haveFloor = false;
@@ -218,7 +229,57 @@ class RoomController extends ChangeNotifier {
   }
 
   Future<void> _saveTalk() {
-    return settings.save(TalkSettings(mode: mode, noiseCancel: noiseCancel));
+    return settings.save(
+      TalkSettings(
+        mode: inBackground ? (_frontMode ?? mode) : mode,
+        noiseCancel: noiseCancel,
+      ),
+    );
+  }
+
+  /// Minimizing the app listens for speech so people can talk over a game.
+  /// The saved Hold or Voice choice comes back when the app is open again.
+  Future<void> enterBackground() async {
+    if (inBackground || _closed) return;
+    if (phase == RoomPhase.needName || phase == RoomPhase.left) return;
+    inBackground = true;
+    _frontMode = mode;
+    _frontMute = voiceMuted;
+    if (_wantFloor || _haveFloor) {
+      _wantFloor = false;
+      _haveFloor = false;
+      holding = false;
+      if (phase == RoomPhase.live) relay.ptt(false);
+    }
+    _gate.reset();
+    _pendingAudio.clear();
+    mode = TalkMode.voice;
+    voiceMuted = false;
+    banner = null;
+    if (!_closed) notifyListeners();
+    await _kickMic();
+    if (phase == RoomPhase.live) _pushNotification();
+  }
+
+  Future<void> leaveBackground() async {
+    if (!inBackground || _closed) return;
+    inBackground = false;
+    final restore = _frontMode ?? TalkMode.hold;
+    final mute = _frontMute;
+    _frontMode = null;
+    if (_wantFloor || _haveFloor) {
+      _wantFloor = false;
+      _haveFloor = false;
+      holding = false;
+      if (phase == RoomPhase.live) relay.ptt(false);
+    }
+    _gate.reset();
+    _pendingAudio.clear();
+    mode = restore;
+    voiceMuted = restore == TalkMode.voice && mute;
+    if (!_closed) notifyListeners();
+    await _kickMic();
+    if (phase == RoomPhase.live) _pushNotification();
   }
 
   Future<void> openRooms() async {
@@ -338,6 +399,7 @@ class RoomController extends ChangeNotifier {
         _pushNotification();
         notifyListeners();
         _kickMic();
+        unawaited(_prepareMic());
       case RoomsEvent():
         if (event.rooms.isNotEmpty) availableRooms = event.rooms;
         notifyListeners();
@@ -421,8 +483,19 @@ class RoomController extends ChangeNotifier {
     _kickMic();
   }
 
+  Future<void> _prepareMic() async {
+    final allowed = await audio.ensureMic();
+    if (_closed) return;
+    if (!allowed) {
+      micDenied = true;
+      return;
+    }
+    if (_service && phase == RoomPhase.live) _pushNotification();
+  }
+
   bool get _needMic {
-    if (phase != RoomPhase.live || picking || _closed) return false;
+    if (phase != RoomPhase.live || _closed) return false;
+    if (picking && !inBackground) return false;
     if (mode == TalkMode.hold) return _haveFloor;
     if (voiceMuted) return false;
     if (speakerId != null && speakerId != selfId && !_haveFloor) return false;
@@ -440,12 +513,19 @@ class RoomController extends ChangeNotifier {
 
   Future<void> _syncMic() async {
     final want = _needMic;
-    if (want && micOn && _openNoise == noiseCancel) return;
+    final alongside = inBackground;
+    if (want &&
+        micOn &&
+        _openNoise == noiseCancel &&
+        _openAlongside == alongside) {
+      return;
+    }
     if (!want && !micOn) return;
     final token = ++_micToken;
     if (micOn) {
       micOn = false;
       _openNoise = null;
+      _openAlongside = null;
       await audio.stopMic();
     }
     if (token != _micToken || _closed || !_needMic) return;
@@ -462,6 +542,7 @@ class RoomController extends ChangeNotifier {
       await audio.startMic(
         (chunk) => _onChunk(token, chunk),
         noiseCancel: noiseCancel,
+        alongside: alongside,
       );
     } catch (_) {
       if (token != _micToken || _closed) return;
@@ -482,6 +563,7 @@ class RoomController extends ChangeNotifier {
     }
     micOn = true;
     _openNoise = noiseCancel;
+    _openAlongside = alongside;
   }
 
   void _onChunk(int token, Uint8List chunk) {
@@ -568,6 +650,7 @@ class RoomController extends ChangeNotifier {
     holding = false;
     _micToken += 1;
     _openNoise = null;
+    _openAlongside = null;
     _gate.reset();
     _pendingAudio.clear();
     _listeningTo = null;

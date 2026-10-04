@@ -44,12 +44,25 @@ class ConnectApp extends StatefulWidget {
   State<ConnectApp> createState() => _ConnectAppState();
 }
 
-class _ConnectAppState extends State<ConnectApp> {
+class _ConnectAppState extends State<ConnectApp> with WidgetsBindingObserver {
+  final _navigatorKey = GlobalKey<NavigatorState>();
+
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     widget.controller.addListener(_onChange);
     widget.controller.boot();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden) {
+      widget.controller.enterBackground();
+    } else if (state == AppLifecycleState.resumed) {
+      widget.controller.leaveBackground();
+    }
   }
 
   void _onChange() {
@@ -58,6 +71,7 @@ class _ConnectAppState extends State<ConnectApp> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     widget.controller.removeListener(_onChange);
     widget.controller.dispose();
     super.dispose();
@@ -79,6 +93,7 @@ class _ConnectAppState extends State<ConnectApp> {
       _ => room.picking ? RoomsPage(room: room) : RoomPage(room: room),
     };
     return MaterialApp(
+      navigatorKey: _navigatorKey,
       title: 'Connect',
       debugShowCheckedModeBanner: false,
       themeMode: ThemeMode.dark,
@@ -87,7 +102,13 @@ class _ConnectAppState extends State<ConnectApp> {
       home: PopScope(
         canPop: false,
         onPopInvokedWithResult: (didPop, _) {
-          if (!didPop) room.background();
+          if (didPop) return;
+          final nav = _navigatorKey.currentState;
+          if (nav != null && nav.canPop()) {
+            nav.pop();
+            return;
+          }
+          room.background();
         },
         child: Scaffold(backgroundColor: Colors.transparent, body: home),
       ),

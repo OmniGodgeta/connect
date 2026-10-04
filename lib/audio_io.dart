@@ -28,38 +28,45 @@ class DeviceAudio implements AudioEngine {
   Future<void> startMic(
     void Function(Uint8List chunk) onChunk, {
     required bool noiseCancel,
+    bool alongside = false,
   }) async {
     await stopMic();
-    final stream = await _start(noiseCancel);
+    final stream = await _start(noiseCancel, alongside);
     _mic = stream.listen(onChunk);
   }
 
-  Future<Stream<Uint8List>> _start(bool noiseCancel) async {
+  Future<Stream<Uint8List>> _start(bool noiseCancel, bool alongside) async {
     try {
-      return await _recorder.startStream(_config(noiseCancel));
+      return await _recorder.startStream(
+        _config(noiseCancel, alongside: alongside),
+      );
     } catch (_) {
-      if (!noiseCancel) rethrow;
-      // Some phones reject the voice-communication path. The plain mic still talks.
+      if (!noiseCancel && !alongside) rethrow;
+      // Some phones reject the processed path. The plain mic still talks.
       return _recorder.startStream(_config(false));
     }
   }
 
-  RecordConfig _config(bool noiseCancel) {
+  RecordConfig _config(bool noiseCancel, {bool alongside = false}) {
+    final processed = noiseCancel;
+    final callPath = processed && !alongside;
     return RecordConfig(
       encoder: AudioEncoder.pcm16bits,
       sampleRate: ConnectConfig.sampleRate,
       numChannels: 1,
-      autoGain: noiseCancel,
-      echoCancel: noiseCancel,
-      noiseSuppress: noiseCancel,
+      autoGain: processed,
+      echoCancel: processed,
+      noiseSuppress: processed,
       androidConfig: AndroidRecordConfig(
-        audioSource: noiseCancel
+        audioSource: callPath
             ? AndroidAudioSource.voiceCommunication
+            : processed
+            ? AndroidAudioSource.voiceRecognition
             : AndroidAudioSource.mic,
-        audioManagerMode: noiseCancel
+        audioManagerMode: callPath
             ? AudioManagerMode.modeInCommunication
             : AudioManagerMode.modeNormal,
-        speakerphone: noiseCancel,
+        speakerphone: callPath,
       ),
     );
   }

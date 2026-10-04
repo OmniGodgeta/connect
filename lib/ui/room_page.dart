@@ -24,13 +24,11 @@ class RoomPage extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(20, 12, 20, 12),
           child: Column(
             children: [
-              _Header(
-                live: live,
-                roomName: room.roomName,
-                line: room.peopleLine,
-              ),
+              _Header(live: live, roomName: room.roomName),
               const SizedBox(height: 14),
-              Expanded(child: _Roster(room: room)),
+              Expanded(
+                child: Center(child: _MembersButton(room: room)),
+              ),
               const SizedBox(height: 8),
               _TalkControls(room: room),
               const SizedBox(height: 8),
@@ -215,10 +213,10 @@ class _TalkControls extends StatelessWidget {
         ),
         Text(
           hold
-              ? 'Press and hold the button. Noise cancelling cleans the mic.'
+              ? 'Press and hold the button. A game in front listens for your voice.'
               : room.voiceMuted
               ? 'Tap the button to listen for your voice again.'
-              : 'Just speak. Tap the button to mute.',
+              : 'Just speak. Tap the button to mute. A game in front keeps listening.',
           textAlign: TextAlign.center,
           style: const TextStyle(
             color: ConnectColors.muted,
@@ -231,16 +229,115 @@ class _TalkControls extends StatelessWidget {
   }
 }
 
+class _MembersButton extends StatelessWidget {
+  const _MembersButton({required this.room});
+
+  final RoomController room;
+
+  @override
+  Widget build(BuildContext context) {
+    final count = room.people.length;
+    final label = count == 1 ? 'member' : 'members';
+    return TextButton(
+      key: const Key('members'),
+      onPressed: () => _showMembers(context, room),
+      style: TextButton.styleFrom(
+        foregroundColor: ConnectColors.text,
+        padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 16),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            '$count',
+            key: const Key('member-count'),
+            style: const TextStyle(
+              fontSize: 56,
+              height: 1,
+              fontWeight: FontWeight.w700,
+              color: ConnectColors.cyan,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            label,
+            style: const TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w600,
+              color: ConnectColors.muted,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+void _showMembers(BuildContext context, RoomController room) {
+  showModalBottomSheet<void>(
+    context: context,
+    backgroundColor: ConnectColors.deep,
+    showDragHandle: true,
+    builder: (context) {
+      return ListenableBuilder(
+        listenable: room,
+        builder: (context, _) {
+          final people = room.people;
+          return SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const Text(
+                    'Members',
+                    style: TextStyle(fontSize: 22, fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 12),
+                  if (people.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.only(bottom: 12),
+                      child: Text(
+                        'Waiting for the room.',
+                        style: TextStyle(color: ConnectColors.muted),
+                      ),
+                    )
+                  else
+                    ConstrainedBox(
+                      constraints: BoxConstraints(
+                        maxHeight: MediaQuery.sizeOf(context).height * 0.5,
+                      ),
+                      child: SingleChildScrollView(
+                        child: Column(
+                          children: [
+                            for (
+                              var index = 0;
+                              index < people.length;
+                              index++
+                            ) ...[
+                              if (index > 0) const SizedBox(height: 8),
+                              _personTile(room, people[index]),
+                            ],
+                          ],
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          );
+        },
+      );
+    },
+  );
+}
+
 class _Header extends StatelessWidget {
-  const _Header({
-    required this.live,
-    required this.roomName,
-    required this.line,
-  });
+  const _Header({required this.live, required this.roomName});
 
   final bool live;
   final String roomName;
-  final String line;
 
   @override
   Widget build(BuildContext context) {
@@ -267,13 +364,6 @@ class _Header extends StatelessWidget {
                 style: const TextStyle(
                   fontSize: 22,
                   fontWeight: FontWeight.w600,
-                ),
-              ),
-              Text(
-                line,
-                style: const TextStyle(
-                  color: ConnectColors.muted,
-                  fontSize: 14,
                 ),
               ),
             ],
@@ -303,75 +393,47 @@ class _Header extends StatelessWidget {
   }
 }
 
-class _Roster extends StatelessWidget {
-  const _Roster({required this.room});
-
-  final RoomController room;
-
-  @override
-  Widget build(BuildContext context) {
-    if (room.people.isEmpty) {
-      return const Center(
-        child: Text(
-          'Waiting for the room.',
-          style: TextStyle(color: ConnectColors.muted),
-        ),
-      );
-    }
-    return SingleChildScrollView(
-      child: Column(
-        children: [
-          for (var index = 0; index < room.people.length; index++) ...[
-            if (index > 0) const SizedBox(height: 8),
-            _personTile(room, room.people[index]),
-          ],
-        ],
+Widget _personTile(RoomController room, Person person) {
+  final talking = person.id == room.speakerId;
+  final mine = person.id == room.selfId;
+  return Container(
+    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+    decoration: BoxDecoration(
+      color: talking ? const Color(0xFF123844) : ConnectColors.tile,
+      borderRadius: BorderRadius.circular(14),
+      border: Border.all(
+        color: talking
+            ? ConnectColors.cyan.withValues(alpha: 0.8)
+            : ConnectColors.line,
       ),
-    );
-  }
-
-  Widget _personTile(RoomController room, Person person) {
-    final talking = person.id == room.speakerId;
-    final mine = person.id == room.selfId;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      decoration: BoxDecoration(
-        color: talking ? const Color(0xFF123844) : ConnectColors.tile,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(
-          color: talking
-              ? ConnectColors.cyan.withValues(alpha: 0.8)
-              : ConnectColors.line,
-        ),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 10,
-            height: 10,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: talking ? ConnectColors.cyan : ConnectColors.line,
-            ),
+    ),
+    child: Row(
+      children: [
+        Container(
+          width: 10,
+          height: 10,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: talking ? ConnectColors.cyan : ConnectColors.line,
           ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Text(
-              person.name,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600),
-            ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Text(
+            person.name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600),
           ),
-          if (mine)
-            const Text(
-              'you',
-              style: TextStyle(color: ConnectColors.muted, fontSize: 13),
-            ),
-        ],
-      ),
-    );
-  }
+        ),
+        if (mine)
+          const Text(
+            'you',
+            style: TextStyle(color: ConnectColors.muted, fontSize: 13),
+          ),
+      ],
+    ),
+  );
 }
 
 class RoomsPage extends StatefulWidget {
