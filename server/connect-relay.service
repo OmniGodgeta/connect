@@ -1,0 +1,13 @@
+[Unit]
+Description=Connect walkie-talkie relay
+After=network-online.target
+
+[Service]
+ExecStart=/home/shadowswords/Work/connect/server/.venv/bin/python /home/shadowswords/Work/connect/server/relay.py
+WorkingDirectory=/home/shadowswords/Work/connect/server
+Restart=on-failure
+RestartSec=2
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=default.target
