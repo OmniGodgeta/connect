@@ -75,6 +75,28 @@ class PhotoEvent extends RelayEvent {
   final Uint8List jpeg;
 }
 
+class ChatLine {
+  const ChatLine(this.id, this.name, this.text);
+
+  final String id;
+  final String name;
+  final String text;
+}
+
+class SayEvent extends RelayEvent {
+  const SayEvent(this.id, this.name, this.text);
+
+  final String id;
+  final String name;
+  final String text;
+}
+
+class ChatLogEvent extends RelayEvent {
+  const ChatLogEvent(this.lines);
+
+  final List<ChatLine> lines;
+}
+
 class ErrorEvent extends RelayEvent {
   const ErrorEvent(this.code);
 
@@ -85,6 +107,19 @@ class DisconnectedEvent extends RelayEvent {
   const DisconnectedEvent(this.error);
 
   final Object? error;
+}
+
+/// A typed line stays on one line and under this many characters.
+const maxChatLength = 240;
+
+/// Trims, collapses whitespace, and keeps 1 to [maxChatLength] characters.
+/// Control characters are rejected. Empty and oversized text is ignored.
+String? cleanChat(String raw) {
+  final text = raw.trim().replaceAll(RegExp(r'\s+'), ' ');
+  if (text.isEmpty) return null;
+  if (text.runes.length > maxChatLength) return null;
+  if (text.runes.any((rune) => rune < 32 || rune == 127)) return null;
+  return text;
 }
 
 /// Trims, collapses whitespace, and keeps 1 to 24 characters.
@@ -157,8 +192,37 @@ RelayEvent? parseEvent(String raw) {
         final bytes = _jpeg(jpeg);
         if (bytes != null) return PhotoEvent(id, bytes);
       }
+    case 'say':
+      final id = decoded['id'];
+      final name = decoded['name'];
+      final text = decoded['text'];
+      if (id is String && name is String && text is String) {
+        final cleaned = cleanChat(text);
+        if (cleaned != null && cleanName(name) != null) {
+          return SayEvent(id, name, cleaned);
+        }
+      }
+    case 'chatlog':
+      return ChatLogEvent(_chatLines(decoded['lines']));
   }
   return null;
+}
+
+List<ChatLine> _chatLines(Object? raw) {
+  if (raw is! List) return const [];
+  final lines = <ChatLine>[];
+  for (final item in raw) {
+    if (item is! Map) continue;
+    final id = item['id'];
+    final name = item['name'];
+    final text = item['text'];
+    if (id is! String || name is! String || text is! String) continue;
+    final cleaned = cleanChat(text);
+    if (cleaned == null || cleanName(name) == null) continue;
+    lines.add(ChatLine(id, name, cleaned));
+  }
+  if (lines.length > 40) return lines.sublist(lines.length - 40);
+  return lines;
 }
 
 /// Empty is a clear. Anything else must be a small JPEG.
@@ -215,3 +279,6 @@ String roomsMessage({bool watch = true}) =>
 /// The relay stamps the sender id. Image bytes never use the PCM channel.
 String photoMessage(String jpegBase64) =>
     jsonEncode({'t': 'photo', 'jpeg': jpegBase64});
+
+/// A typed line. The relay stamps the sender. This never goes out as PCM.
+String sayMessage(String text) => jsonEncode({'t': 'say', 'text': text});

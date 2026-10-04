@@ -52,5 +52,32 @@ void main() {
     final photo = parseEvent('{"t":"photo","id":"abc12345","jpeg":"$jpeg"}');
     expect((photo! as PhotoEvent).jpeg, [0xff, 0xd8, 0x00, 0xd9]);
     expect(parseEvent('{"t":"photo","id":"abc12345","jpeg":"!!!!"}'), isNull);
+
+    final say = parseEvent(
+      '{"t":"say","id":"spoofed","name":"Ada","text":"  hello   there  "}',
+    );
+    expect(say, isA<SayEvent>());
+    expect((say! as SayEvent).text, 'hello there');
+    expect((say as SayEvent).id, 'spoofed');
+
+    final log = parseEvent(
+      '{"t":"chatlog","lines":[{"id":"abc12345","name":"Ada","text":"hello there"},{"id":"x","name":"","text":"no"}]}',
+    );
+    expect(log, isA<ChatLogEvent>());
+    expect((log! as ChatLogEvent).lines.single.text, 'hello there');
+    expect(
+      parseEvent('{"t":"say","id":"abc12345","name":"Ada","text":""}'),
+      isNull,
+    );
+  });
+
+  test('cleanChat trims and rejects blanks, controls, and long lines', () {
+    expect(cleanChat('  hello   there '), 'hello there');
+    expect(cleanChat('   '), isNull);
+    expect(cleanChat('bad\nline'), 'bad line');
+    expect(cleanChat('bad\u0000line'), isNull);
+    expect(cleanChat('a' * 240), 'a' * 240);
+    expect(cleanChat('a' * 241), isNull);
+    expect(sayMessage('hello'), '{"t":"say","text":"hello"}');
   });
 }

@@ -2,9 +2,21 @@
 
 Updated 2026-10-04. Start here, then `AGENTS.md`.
 
+## Shipped — 1.6.0
+
+1.6.0+7 is the current release. Asset `connect-1.6.0.apk` on tag `v1.6.0`. 1.5.0+6 (`d297ad5`, `connect-1.5.0.apk`) stays up. Friends need 1.6.0 to hear the fix, to type in the room, and to install a later build from inside the app. A 1.5.0 phone still talks at 48 kHz, shows photos, uses volume keys and the bubble, and ignores chat.
+
+Three changes:
+
+1. Hearing. The speaker animation proved the voice arrived. Playback asked for samples once, before any audio, and then waited forever. `SpeakerFeed` writes a chunk as soon as audio arrives while listening is already on. `beginListen` does not clear that queue. The emulator has no speaker, so this was checked with a unit test, not by ear. If a 1.6.0 phone still shows the cone and stays silent, leave the media stream alone until that is confirmed, then look at audio focus and `MODE_IN_COMMUNICATION`.
+2. Typed chat. Chat is a sheet (the Chat button). The phone sends `{"t":"say","text":"..."}`. The relay trims, keeps at most 240 characters, rejects control characters, ignores empty or oversized text, stamps id and name, and broadcasts `{"t":"say","id","name","text"}` to the room, including the sender. It keeps the last 40 lines and sends `{"t":"chatlog","lines":[...]}` after photos when someone joins or changes room. The log goes away when the room is empty. Text never uses the PCM channel. A 1.5.0 phone ignores the new message types.
+3. In-app update. On join, and from Check for an update in the chat sheet, the phone reads `https://api.github.com/repos/OmniGodgeta/connect/releases/latest` (User-Agent `Connect`) and compares `tag_name` with the installed versionName. The asset must be named `connect-X.Y.Z.apk`. Install uses `PackageInstaller` and `InstallStatusReceiver` (`PendingIntent.getBroadcast`, `FLAG_MUTABLE`) so Android 14 can show the confirm screen. The phone needs permission to install unknown apps. A failed check says "Could not check for an update." and does not crash. 1.6.0 is the newest release, so this build reports that it is up to date until a later tag exists.
+
+Standing rules: `cd` into `connect`. No Hermes, no model switch, no fine-tune. Do not print the keystore password. Do not commit `android/key.properties`, the keystore, `server/.venv`, `build/`, or APKs. Cert SHA-256 stays `39b45b725ff851d34a7cd5d5fb62ad31862fa70137d9b319c61d081f836f7a41`. Hearing on a real phone is still an operator check. Emulator is `pixel_api35` with `-no-audio`. Confirm it is stopped with `pgrep qemu-system` (a shell line that contains `emulator` false-matches `pgrep -f`).
+
 ## Shipped — 1.5.0
 
-1.5.0+6 is the current release. Asset `connect-1.5.0.apk` on tag `v1.5.0`. 1.4.0+5 (`72b184b`, `connect-1.4.0.apk`) stays up. Friends need 1.5.0 for volume-key talk, the bubble, shared photos, the join/leave tone, and per-person volume. A 1.4.0 phone still talks at 48 kHz, shows painted pictures, listens for speech when minimized, and ignores the photo message.
+1.5.0+6 stays available. Asset `connect-1.5.0.apk` on tag `v1.5.0`. 1.4.0+5 (`72b184b`, `connect-1.4.0.apk`) stays up. Friends need 1.5.0 for volume-key talk, the bubble, shared photos, the join/leave tone, and per-person volume. A 1.4.0 phone still talks at 48 kHz, shows painted pictures, listens for speech when minimized, and ignores the photo message. A 1.5.0 phone ignores chat.
 
 The five features:
 
@@ -20,11 +32,11 @@ Standing rules: `cd` into `connect`. No Hermes, no model switch, no fine-tune. D
 
 ## Resume status
 
-1.5.0 is released. The relay on this PC is already running the photo-aware `server/relay.py` (`connect-relay.service` was restarted, health `ok`). Do not run `tailscale serve reset`. The next operator step is two real phones, plus the volume-key accessibility service and display over other apps.
+1.6.0 is the release to install. The relay must be the chat-aware `server/relay.py` (`connect-relay.service` restarted after that file was saved, health `ok`). Do not run `tailscale serve reset`. The next operator step is the three phones on 1.6.0: talk and confirm the voice is heard, open Chat and type, and leave the volume-key service and the bubble on.
 
 ## What this is
 
-Android walkie-talkie. Package `com.shadowswords.connect`, version 1.5.0+6. No accounts. The first open asks for a display name (1–24 characters) and saves it on the phone with a stable id. Later opens join the last room, or Everyone. Rooms can be created from the Rooms button. Talk is either hold-to-talk or voice detection. Minimizing the app does not listen for speech. Hold a volume key, or Talk on the bubble, to talk over a game. The member count opens the list. Each person has a picture, and the picture of whoever is talking moves with their voice. One speaker at a time in a room. Dark theme only. Audio is 48 kHz mono PCM16. Noise cancelling defaults on.
+Android walkie-talkie. Package `com.shadowswords.connect`, version 1.6.0+7. No accounts. The first open asks for a display name (1–24 characters) and saves it on the phone with a stable id. Later opens join the last room, or Everyone. Rooms can be created from the Rooms button. Talk is either hold-to-talk or voice detection. Minimizing the app does not listen for speech. Hold a volume key, or Talk on the bubble, to talk over a game. The member count opens the list. Chat is a sheet. Each person has a picture, and the picture of whoever is talking moves with their voice. One speaker at a time in a room. Dark theme only. Audio is 48 kHz mono PCM16. Noise cancelling defaults on.
 
 The relay is on this PC, localhost only. Phones reach it through Tailscale. It is not on the public internet and not on Funnel.
 
@@ -54,6 +66,8 @@ The relay is on this PC, localhost only. Phones reach it through Tailscale. It i
 - A virtual volume-down key (`uinput`, `KEY_VOLUMEDOWN`) while armed was received as key 25, did not change the music volume (the key was consumed), granted Eric the floor, and streamed PCM until release. `adb shell input keyevent` never reached `VolumeTalkService` on this emulator. Speaker playback was still not heard (`-no-audio`). The emulator was then stopped (`pgrep qemu-system` empty).
 - `flutter build apk --release` produced `build/app/outputs/flutter-apk/app-release.apk` (about 49 MB). `apksigner` certificate SHA-256 matches `~/.config/connect/upload-keystore.jks` alias `connect` (`CN=Connect, OU=ShadowSwords, O=ShadowSwords, L=Toronto, ST=Ontario, C=CA`). The password is only in gitignored `android/key.properties`.
 - `flutter_pcm_sound` 3.3.3 hardcodes compileSdk 33. `android/build.gradle.kts` raises library modules to 36 with `finalizeDsl`. Do not set compileSdk in `afterEvaluate`; AGP 9 rejects that.
+- 1.6.0: `flutter analyze` was clean and `flutter test` passed (35). `server/test_relay.py` passed. `connect-relay.service` was restarted onto this relay. Health returned `ok`. A unit test feeds samples that arrive after listening has already started, and drops samples cleared by stop. The relay test kept 40 chat lines, ignored a spoofed id, left PCM on the binary path, and dropped the log after the room emptied.
+- `flutter build apk --release` produced `build/app/outputs/flutter-apk/app-release.apk` (56309044 bytes). `aapt` reports package `com.shadowswords.connect`, versionName 1.6.0, versionCode 7, label Connect. `apksigner` certificate SHA-256 matches `~/.config/connect/upload-keystore.jks` alias `connect`. The password is only in gitignored `android/key.properties`. The emulator was not started.
 
 ## Audio (1.1.0)
 
@@ -96,14 +110,19 @@ The relay is on this PC, localhost only. Phones reach it through Tailscale. It i
 - Someone else joining or leaving plays a short tone on this phone. The people already there when you arrive, and a room change, do not each play it. You do not chime for yourself.
 - The member list has a volume slider for each other person. It is saved on this phone (`connect.levels`). Their picture follows the quieter audio. Your own voice is unchanged.
 
+## Chat and updates (1.6.0)
+
+- Chat is the Chat button. Messages stay in that room. A new person sees the recent lines. Empty, too long, or control-character text is dropped. The relay log records the length, not the words.
+- Update appears on the room when GitHub has a newer `connect-X.Y.Z.apk`. Check for an update is at the bottom of Chat. The first install from Connect asks Android for permission to install unknown apps.
+
 ## Not checked on a phone
 
-No physical device was attached. A real two-phone test is still for the operator: Tailscale connected on each phone, this PC awake, 1.5.0 on each phone that should use volume keys, the bubble, shared photos, the join/leave tone, and per-person volume. On each phone, turn on Connect's volume-key accessibility service and allow display over other apps. A 1.4.0 phone still talks, shows painted pictures, and listens for speech when minimized. Hold to talk and voice detection, noise cancelling on and off, create a room and have the other phone join it, the other phone hears it, the picture moves while they speak, and swipe-away leaves the room. The emulator had no speaker, so hearing the other person is still unchecked.
+No physical device was attached. Hearing was reproduced in a unit test: samples queued after listening starts are fed. The emulator has no speaker, so the three phones still have to confirm they can hear each other on 1.6.0. Chat and the installer were not tapped on a phone. On each phone, turn on Connect's volume-key accessibility service and allow display over other apps. A 1.5.0 phone still talks and does not show chat. A 1.4.0 phone still talks, shows painted pictures, and listens for speech when minimized.
 
 ## Operator steps
 
 1. Invite any friend who is not already on tailnet `tail51f9d6.ts.net`.
-2. Send https://github.com/OmniGodgeta/connect/releases/download/v1.5.0/connect-1.5.0.apk. Volume keys, the bubble, a shared photo, the join/leave sound, and per-person volume need this build. A 1.4.0 phone still talks, shows painted pictures, and listens for speech when minimized. A 1.0.0 phone plays 48 kHz audio at the wrong speed. A private repo link would 404 unless they are collaborators, which is why the repo is public. The relay stays tailnet-only. On the phone, also turn on Volume keys (accessibility) and allow the bubble over other apps.
+2. Send https://github.com/OmniGodgeta/connect/releases/download/v1.6.0/connect-1.6.0.apk. Hearing, chat, and the in-app updater need this build. A 1.5.0 phone still talks and ignores chat. A 1.0.0 phone plays 48 kHz audio at the wrong speed. A private repo link would 404 unless they are collaborators, which is why the repo is public. The relay stays tailnet-only. On the phone, also turn on Volume keys (accessibility) and allow the bubble over other apps.
 3. On the phone: install the APK, connect Tailscale, open Connect, enter a name.
 4. Keep this PC awake while people are in the room.
 

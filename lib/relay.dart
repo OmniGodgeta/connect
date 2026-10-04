@@ -18,6 +18,8 @@ abstract class Relay {
 
   void photo(String jpegBase64);
 
+  void say(String text);
+
   void audio(List<int> pcm);
 
   Future<void> close();
@@ -73,6 +75,11 @@ class SocketRelay implements Relay {
   @override
   void photo(String jpegBase64) {
     _channel?.sink.add(photoMessage(jpegBase64));
+  }
+
+  @override
+  void say(String text) {
+    _channel?.sink.add(sayMessage(text));
   }
 
   @override

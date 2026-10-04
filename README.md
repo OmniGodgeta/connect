@@ -21,8 +21,10 @@ The repo is public so a link works for friends. The release APK is the download.
 9. Choose Hold or Voice. Hold means press the big button. Voice means just speak, and tap the button to mute.
 10. Noise cancelling is on. It uses the phone's noise suppressor, echo canceler, and automatic gain. Turn it off for the plain microphone.
 11. Before you play a game, turn on Volume keys and Bubble over games if Connect asks. Volume keys is in the phone's accessibility settings. The bubble is "display over other apps". Then minimize Connect. Holding a volume key, or holding Talk on the bubble, transmits. Letting go stops. A loud game does not open the microphone. The bubble shows who is talking. Opening Connect again uses the Hold or Voice choice you saved. Swiping Connect away leaves the room. This PC has to be awake.
+12. Tap Chat to type. Friends in the same room see it. The last lines are still there when someone joins.
+13. Connect checks GitHub for a newer install. When one exists, tap Update. Android asks once for permission to install apps from Connect.
 
-Sound is 48 kHz mono, the same rate on every phone. Install 1.1.0 or newer on each phone. The 1.0.0 build used 16 kHz and will not sound right next to this one. Creating a room needs 1.2.0 or newer. A 1.1.0 phone stays in Everyone. The talking picture needs 1.4.0. Volume keys, the bubble, a shared photo, the join and leave sound, and per-person volume need 1.5.0. A 1.4.0 phone still talks at 48 kHz, shows the painted pictures, and listens for speech when you minimize it. It ignores the photo message.
+Sound is 48 kHz mono, the same rate on every phone. Install 1.1.0 or newer on each phone. The 1.0.0 build used 16 kHz and will not sound right next to this one. Creating a room needs 1.2.0 or newer. A 1.1.0 phone stays in Everyone. The talking picture needs 1.4.0. Volume keys, the bubble, a shared photo, the join and leave sound, and per-person volume need 1.5.0. Hearing the other person, typed chat, and the in-app updater need 1.6.0. A 1.5.0 phone still talks at 48 kHz and ignores chat. A 1.4.0 phone still talks, shows the painted pictures, and listens for speech when you minimize it.
 
 The name stays on the phone. There is no login.
 

@@ -1,16 +1,21 @@
 package com.shadowswords.connect
 
 import android.Manifest
+import android.app.PendingIntent
+import android.content.ClipData
 import android.content.ComponentName
 import android.content.Intent
+import android.content.pm.PackageInstaller
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import java.io.File
 
 class MainActivity : FlutterActivity() {
     private var pendingNotify: MethodChannel.Result? = null
@@ -32,6 +37,9 @@ class MainActivity : FlutterActivity() {
         super.configureFlutterEngine(flutterEngine)
         val channel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "connect/room")
         TalkBridge.channel = channel
+        InstallStatusReceiver.statusSink = { msg ->
+            channel.invokeMethod("installStatus", msg)
+        }
         channel.setMethodCallHandler { call, result ->
             when (call.method) {
                 "notifications" -> requestNotifications(result)
@@ -83,7 +91,63 @@ class MainActivity : FlutterActivity() {
                     BubbleOverlay.hide()
                     result.success(null)
                 }
+                "installApk" -> {
+                    val path = call.argument<String>("path") ?: ""
+                    result.success(installApk(path))
+                }
                 else -> result.notImplemented()
+            }
+        }
+    }
+
+    override fun onDestroy() {
+        InstallStatusReceiver.statusSink = null
+        super.onDestroy()
+    }
+
+    private fun installApk(path: String): String {
+        val file = File(path)
+        if (!file.exists()) return "missing"
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+            !packageManager.canRequestPackageInstalls()
+        ) {
+            startActivity(
+                Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES)
+                    .setData(Uri.parse("package:$packageName"))
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
+            return "needPermission"
+        }
+        return try {
+            val installer = packageManager.packageInstaller
+            val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
+            val sessionId = installer.createSession(params)
+            val session = installer.openSession(sessionId)
+            session.openWrite("package", 0, file.length()).use { output ->
+                file.inputStream().use { input -> input.copyTo(output) }
+                session.fsync(output)
+            }
+            val statusIntent = Intent(this, InstallStatusReceiver::class.java).apply {
+                action = installStatusAction
+            }
+            val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
+            val pending = PendingIntent.getBroadcast(this, sessionId, statusIntent, flags)
+            session.commit(pending.intentSender)
+            session.close()
+            "ok"
+        } catch (_: Exception) {
+            try {
+                val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
+                val intent = Intent(Intent.ACTION_VIEW).apply {
+                    setDataAndType(uri, "application/vnd.android.package-archive")
+                    clipData = ClipData.newRawUri("", uri)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                startActivity(intent)
+                "fallback_ok"
+            } catch (fallback: Exception) {
+                "installer: ${fallback.javaClass.simpleName}"
             }
         }
     }
@@ -122,5 +186,6 @@ class MainActivity : FlutterActivity() {
 
     companion object {
         private const val notifyRequest = 4101
+        private const val installStatusAction = "com.shadowswords.connect.PACKAGE_INSTALL_STATUS"
     }
 }

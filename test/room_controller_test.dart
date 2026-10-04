@@ -11,6 +11,7 @@ import 'package:connect/relay.dart';
 import 'package:connect/room_controller.dart';
 import 'package:connect/room_store.dart';
 import 'package:connect/talk_settings.dart';
+import 'package:connect/update.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 Uint8List tone(int samples, int amplitude) {
@@ -46,6 +47,9 @@ class FakeRelay implements Relay {
 
   @override
   void photo(String jpeg) => log.add('photo:${jpeg.length}');
+
+  @override
+  void say(String text) => log.add('say:$text');
 
   @override
   void audio(List<int> pcm) => log.add('audio:${pcm.length}');
@@ -155,6 +159,8 @@ RoomController buildRoom({
   MemoryRoomStore? rooms,
   PhotoStore? photoStore,
   PhotoPicker? pickPhoto,
+  UpdateCheck? checkUpdate,
+  UpdateInstall? installRelease,
   Scheduler? schedule,
 }) {
   return RoomController(
@@ -165,6 +171,8 @@ RoomController buildRoom({
     rooms: rooms,
     photoStore: photoStore,
     pickPhoto: pickPhoto,
+    checkUpdate: checkUpdate,
+    installRelease: installRelease,
     alerts: alerts ?? FakeAlerts(),
     schedule: schedule ?? (_, _) => () {},
   );
@@ -566,7 +574,10 @@ void main() {
     await room.choosePhoto();
     expect(room.photoOf(room.selfId!), isNotNull);
     expect(store.current, isNotNull);
-    expect(relay.log.any((line) => line.startsWith('photo:') && line != 'photo:0'), isTrue);
+    expect(
+      relay.log.any((line) => line.startsWith('photo:') && line != 'photo:0'),
+      isTrue,
+    );
 
     relay.emit(PhotoEvent('alex0001', jpeg));
     expect(room.photoOf('alex0001'), jpeg);
@@ -576,4 +587,62 @@ void main() {
     expect(store.current, isNull);
     expect(relay.log.last, 'photo:0');
   });
+
+  test('chat keeps a line and ignores a blank one', () async {
+    final relay = FakeRelay();
+    final room = buildRoom(relay: relay);
+    await enter(room, relay, 'Eric');
+
+    expect(room.sendChat('   '), isFalse);
+    expect(room.sendChat('  hello there  '), isTrue);
+    expect(relay.log, contains('say:hello there'));
+
+    relay.emit(const SayEvent('alex0001', 'Alex', 'On my way'));
+    expect(room.chat.single.text, 'On my way');
+    expect(room.chat.single.name, 'Alex');
+
+    relay.emit(
+      const ChatLogEvent([
+        ChatLine('ada00001', 'Ada', 'Earlier'),
+        ChatLine('alex0001', 'Alex', 'On my way'),
+      ]),
+    );
+    expect(room.chat.map((line) => line.text), ['Earlier', 'On my way']);
+
+    relay.emit(WelcomeEvent(room.selfId!, 'Eric', room: 'Cabin'));
+    expect(room.roomName, 'Cabin');
+    expect(room.chat, isEmpty);
+  });
+
+  test(
+    'a newer release can be installed and a failed check is a short note',
+    () async {
+      final relay = FakeRelay();
+      final room = buildRoom(
+        relay: relay,
+        checkUpdate: () async => const UpdateOffer(
+          version: '9.0.0',
+          url: 'https://example.test/connect-9.0.0.apk',
+          fileName: 'connect-9.0.0.apk',
+        ),
+        installRelease: (_) async => 'ok',
+      );
+      await enter(room, relay, 'Eric');
+      await pumpEventQueue();
+      expect(room.updateOffer?.version, '9.0.0');
+
+      await room.installUpdate();
+      expect(room.updateNote, 'Opening installer…');
+
+      final offlineRelay = FakeRelay();
+      final offline = buildRoom(
+        relay: offlineRelay,
+        checkUpdate: () async => throw Exception('offline'),
+      );
+      await enter(offline, offlineRelay, 'Eric');
+      await offline.lookForUpdate(manual: true);
+      expect(offline.updateNote, 'Could not check for an update.');
+      expect(offline.phase, RoomPhase.live);
+    },
+  );
 }

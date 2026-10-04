@@ -6,14 +6,16 @@ import 'package:record/record.dart';
 
 import 'audio_engine.dart';
 import 'config.dart';
+import 'speaker_feed.dart';
 
 class DeviceAudio implements AudioEngine {
-  DeviceAudio() : _recorder = AudioRecorder();
+  DeviceAudio() : _recorder = AudioRecorder() {
+    _feed = SpeakerFeed(sampleRate: ConnectConfig.sampleRate, onReady: _pump);
+  }
 
   final AudioRecorder _recorder;
+  late final SpeakerFeed _feed;
   StreamSubscription<Uint8List>? _mic;
-  final List<int> _samples = <int>[];
-  bool _listening = false;
   bool _starting = false;
 
   @override
@@ -87,7 +89,7 @@ class DeviceAudio implements AudioEngine {
 
   @override
   Future<void> beginListen() async {
-    if (_listening || _starting) return;
+    if (_feed.listening || _starting) return;
     _starting = true;
     try {
       await FlutterPcmSound.setup(
@@ -95,8 +97,10 @@ class DeviceAudio implements AudioEngine {
         channelCount: 1,
       );
       await FlutterPcmSound.setFeedThreshold(ConnectConfig.sampleRate ~/ 10);
-      FlutterPcmSound.setFeedCallback(_onFeed);
-      _listening = true;
+      FlutterPcmSound.setFeedCallback((_) => _pump());
+      // Samples can arrive before setup finishes. start() feeds those, and
+      // also arms the plugin's one-shot callback for an empty queue.
+      _feed.start();
       FlutterPcmSound.start();
     } finally {
       _starting = false;
@@ -105,37 +109,21 @@ class DeviceAudio implements AudioEngine {
 
   @override
   void play(Uint8List pcm) {
-    if (pcm.length < 2) return;
-    _enqueue(pcm);
-    if (!_listening) unawaited(beginListen());
+    _feed.play(pcm);
+    if (!_feed.listening) unawaited(beginListen());
   }
 
-  void _enqueue(Uint8List pcm) {
-    final data = ByteData.sublistView(pcm);
-    final end = pcm.length - (pcm.length.isOdd ? 1 : 0);
-    for (var i = 0; i < end; i += 2) {
-      _samples.add(data.getInt16(i, Endian.little));
-    }
-    final cap = ConnectConfig.sampleRate;
-    if (_samples.length > cap) {
-      _samples.removeRange(0, _samples.length - ConnectConfig.sampleRate ~/ 2);
-    }
-  }
-
-  void _onFeed(int remaining) {
-    if (!_listening || _samples.isEmpty) return;
-    final budget = ConnectConfig.sampleRate ~/ 10;
-    final count = _samples.length < budget ? _samples.length : budget;
-    final chunk = _samples.sublist(0, count);
-    _samples.removeRange(0, count);
+  void _pump() {
+    final chunk = _feed.takeChunk();
+    if (chunk == null) return;
     FlutterPcmSound.feed(PcmArrayInt16.fromList(chunk));
   }
 
   @override
   Future<void> stopPlay() async {
-    _samples.clear();
-    if (!_listening) return;
-    _listening = false;
+    final was = _feed.listening;
+    _feed.stop();
+    if (!was) return;
     FlutterPcmSound.setFeedCallback(null);
     await FlutterPcmSound.release();
   }

@@ -366,6 +366,68 @@ async def test_photo_is_not_audio(port: int) -> None:
     await cam.close()
 
 
+async def test_chat_is_not_audio(port: int) -> None:
+    eric = "eric000000000031"
+    alex = "alex000000000031"
+    a = await join(port, eric, "Eric")
+    b = await join(port, alex, "Alex")
+    await a.expect("roster")
+
+    await a.ws.send(json.dumps({"t": "say", "text": "", "id": "spoofed"}))
+    await a.ws.send(json.dumps({"t": "say", "text": "x" * 241}))
+    await a.ws.send(json.dumps({"t": "say", "text": "bad\x00line"}))
+    for i in range(41):
+        await a.ws.send(json.dumps({"t": "say", "text": f"n{i}", "id": "spoofed"}))
+        echo = await a.expect("say")
+        seen = await b.expect("say")
+        assert echo["id"] == eric and echo["name"] == "Eric" and echo["text"] == f"n{i}"
+        assert seen["id"] == eric and seen["text"] == f"n{i}"
+
+    cam = await join(port, "cam0000000000031", "Cam")
+    logmsg = await cam.expect("chatlog")
+    assert len(logmsg["lines"]) == 40
+    assert logmsg["lines"][0]["text"] == "n1"
+    assert logmsg["lines"][-1]["text"] == "n40"
+    assert logmsg["lines"][-1]["id"] == eric
+    await a.expect("roster")
+    await b.expect("roster")
+
+    await a.ws.send(json.dumps({"t": "ptt", "down": True}))
+    assert (await a.expect("floor"))["ok"] is True
+    await a.expect("talk")
+    await a.expect("roster")
+    await b.expect("talk")
+    await b.expect("roster")
+    await cam.expect("talk")
+    await cam.expect("roster")
+    await a.ws.send(b"\x02\x00")
+    assert await b.next_bytes() == b"\x02\x00"
+    assert await cam.next_bytes() == b"\x02\x00"
+
+    await b.ws.send(json.dumps({"t": "join", "room": "Cabin"}))
+    moved = await b.expect("welcome")
+    assert moved["room"] == "Cabin"
+    cabin = await b.expect("roster")
+    assert [p["id"] for p in cabin["people"]] == [alex]
+    await a.expect("roster")
+    await cam.expect("roster")
+    await a.ws.send(json.dumps({"t": "say", "text": "still here"}))
+    assert (await cam.expect("say"))["text"] == "still here"
+    await a.expect("say")
+    await b.ws.send(json.dumps({"t": "ptt", "down": True}))
+    assert (await b.expect("floor"))["ok"] is True
+
+    await a.close()
+    await b.close()
+    await cam.close()
+    await asyncio.sleep(0.4)
+    dee = await join(port, "dee0000000000031", "Dee")
+    await dee.ws.send(json.dumps({"t": "ptt", "down": True}))
+    fresh = await dee.next_json()
+    assert fresh["t"] == "floor" and fresh["ok"] is True, fresh
+    await dee.close()
+
+
 async def main() -> None:
     room = Room(floor_audio_timeout=0.45, watch_interval=0.05)
     server, watcher = await serve_room("127.0.0.1", 0, room)
@@ -381,6 +443,7 @@ async def main() -> None:
         await test_rooms_stay_separate(port)
         await test_room_limits()
         await test_photo_is_not_audio(port)
+        await test_chat_is_not_audio(port)
     finally:
         room.stop()
         watcher.cancel()

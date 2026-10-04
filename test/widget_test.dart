@@ -61,6 +61,27 @@ void main() {
     expect(find.text('Alex'), findsNothing);
     expect(find.text('LIVE'), findsOneWidget);
 
+    await tester.tap(find.byKey(const Key('messages')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.byKey(const Key('chat-field')), findsOneWidget);
+    expect(find.text('Alex'), findsNothing);
+    await tester.enterText(
+      find.byKey(const Key('chat-field')),
+      '  hello there  ',
+    );
+    await tester.tap(find.byKey(const Key('chat-send')));
+    await tester.pump();
+    expect(relay.log, contains('say:hello there'));
+    relay.emit(const SayEvent('alex0001', 'Alex', 'On my way'));
+    await tester.pump();
+    expect(find.text('Alex'), findsOneWidget);
+    expect(find.text('On my way'), findsOneWidget);
+    await tester.binding.handlePopRoute();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.text('Alex'), findsNothing);
+
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
     // A paused app stops normal frames. Force one so the status line rebuilds.
     tester.binding.scheduleForcedFrame();

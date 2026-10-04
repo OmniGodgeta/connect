@@ -17,6 +17,7 @@ import 'protocol.dart';
 import 'relay.dart';
 import 'room_store.dart';
 import 'talk_settings.dart';
+import 'update.dart';
 import 'voice_gate.dart';
 import 'voice_tone.dart';
 
@@ -25,6 +26,8 @@ enum RoomPhase { needName, connecting, live, left }
 typedef Cancel = void Function();
 typedef Scheduler = Cancel Function(Duration delay, void Function() fn);
 typedef PhotoPicker = Future<Uint8List?> Function();
+typedef UpdateCheck = Future<UpdateOffer?> Function();
+typedef UpdateInstall = Future<String> Function(UpdateOffer offer);
 
 class RoomController extends ChangeNotifier {
   RoomController({
@@ -37,6 +40,8 @@ class RoomController extends ChangeNotifier {
     PhotoStore? photoStore,
     LevelStore? levelStore,
     this.pickPhoto,
+    this.checkUpdate,
+    this.installRelease,
     this.schedule = _timer,
   }) : settings = settings ?? MemoryTalkSettings(),
        rooms = rooms ?? MemoryRoomStore(),
@@ -52,6 +57,8 @@ class RoomController extends ChangeNotifier {
   final PhotoStore photoStore;
   final LevelStore levelStore;
   final PhotoPicker? pickPhoto;
+  final UpdateCheck? checkUpdate;
+  final UpdateInstall? installRelease;
   final Scheduler schedule;
   final VoiceGate _gate = VoiceGate();
   final Presence _presence = Presence();
@@ -83,6 +90,10 @@ class RoomController extends ChangeNotifier {
   Uint8List? selfPhoto;
   final Map<String, Uint8List> photos = {};
   final Map<String, double> levels = {};
+  final List<ChatLine> chat = [];
+  UpdateOffer? updateOffer;
+  String? updateNote;
+  bool updateBusy = false;
   TalkMode? _frontMode;
   bool _frontMute = false;
 
@@ -99,6 +110,7 @@ class RoomController extends ChangeNotifier {
   Cancel? _pending;
   bool? _openNoise;
   bool? _openAlongside;
+  bool _checkedUpdate = false;
   final List<Uint8List> _pendingAudio = <Uint8List>[];
 
   bool get selfTalking => _haveFloor;
@@ -215,6 +227,8 @@ class RoomController extends ChangeNotifier {
     phase = RoomPhase.left;
     _dropLocalFloor();
     people = const [];
+    chat.clear();
+    _checkedUpdate = false;
     speakerId = null;
     speakerName = null;
     banner = null;
@@ -453,13 +467,21 @@ class RoomController extends ChangeNotifier {
       case WelcomeEvent():
         _everLive = true;
         _presence.reset();
+        final wasLive = phase == RoomPhase.live;
         phase = RoomPhase.live;
         banner = null;
         _attempt = 0;
         final nextRoom = cleanName(event.room ?? '');
+        if (!wasLive || (nextRoom != null && nextRoom != roomName)) {
+          chat.clear();
+        }
         if (nextRoom != null && nextRoom != roomName) {
           roomName = nextRoom;
           unawaited(rooms.save(roomName));
+        }
+        if (!_checkedUpdate) {
+          _checkedUpdate = true;
+          unawaited(lookForUpdate());
         }
         _publishPhoto();
         _pushNotification();
@@ -471,10 +493,7 @@ class RoomController extends ChangeNotifier {
         notifyListeners();
       case RosterEvent():
         people = event.people;
-        final shift = _presence.take(
-          people.map((person) => person.id),
-          selfId,
-        );
+        final shift = _presence.take(people.map((person) => person.id), selfId);
         if (shift.$1 > 0) audio.play(arriveChime);
         if (shift.$2 > 0) audio.play(leaveChime);
         _applySpeaker(event.speakerId, _nameFor(event.speakerId));
@@ -489,6 +508,15 @@ class RoomController extends ChangeNotifier {
           photos[event.id] = event.jpeg;
           if (event.id == selfId) selfPhoto = event.jpeg;
         }
+        notifyListeners();
+      case SayEvent():
+        chat.add(ChatLine(event.id, event.name, event.text));
+        if (chat.length > 40) chat.removeRange(0, chat.length - 40);
+        notifyListeners();
+      case ChatLogEvent():
+        chat
+          ..clear()
+          ..addAll(event.lines);
         notifyListeners();
       case FloorEvent():
         _onFloor(event);
@@ -570,6 +598,62 @@ class RoomController extends ChangeNotifier {
     }
     notifyListeners();
     _kickMic();
+  }
+
+  bool sendChat(String raw) {
+    final text = cleanChat(raw);
+    if (text == null || phase != RoomPhase.live || _closed) return false;
+    relay.say(text);
+    return true;
+  }
+
+  Future<void> lookForUpdate({bool manual = false}) async {
+    final check = checkUpdate;
+    if (check == null || updateBusy || _closed) return;
+    updateBusy = true;
+    if (manual) {
+      updateNote = 'Checking…';
+      notifyListeners();
+    }
+    try {
+      final offer = await check();
+      if (_closed) return;
+      updateOffer = offer;
+      if (manual) {
+        updateNote = offer == null ? 'Connect is up to date.' : null;
+      }
+    } catch (_) {
+      if (_closed) return;
+      if (manual) updateNote = 'Could not check for an update.';
+    } finally {
+      updateBusy = false;
+      if (!_closed) notifyListeners();
+    }
+  }
+
+  Future<void> installUpdate() async {
+    final offer = updateOffer;
+    final install = installRelease;
+    if (offer == null || install == null || updateBusy || _closed) return;
+    updateBusy = true;
+    updateNote = 'Downloading…';
+    notifyListeners();
+    try {
+      final status = await install(offer);
+      if (_closed) return;
+      updateNote = updateStatusLine(status);
+    } catch (_) {
+      if (!_closed) updateNote = 'The download did not finish.';
+    } finally {
+      updateBusy = false;
+      if (!_closed) notifyListeners();
+    }
+  }
+
+  void noteInstallProblem(String message) {
+    if (message.isEmpty || _closed) return;
+    updateNote = 'The installer did not open.';
+    notifyListeners();
   }
 
   Future<void> _prepareMic() async {

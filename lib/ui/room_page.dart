@@ -8,6 +8,7 @@ import '../room_controller.dart';
 import '../talk_settings.dart';
 import '../theme.dart';
 import '../voice_tone.dart';
+import 'chat_sheet.dart';
 import 'ptt_button.dart';
 import 'speaker_stage.dart';
 
@@ -27,7 +28,7 @@ class RoomPage extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(20, 12, 20, 12),
           child: Column(
             children: [
-              _Header(live: live, roomName: room.roomName),
+              _Header(room: room),
               const SizedBox(height: 14),
               Expanded(
                 child: LayoutBuilder(
@@ -502,13 +503,14 @@ void _showMembers(BuildContext context, RoomController room) {
 }
 
 class _Header extends StatelessWidget {
-  const _Header({required this.live, required this.roomName});
+  const _Header({required this.room});
 
-  final bool live;
-  final String roomName;
+  final RoomController room;
 
   @override
   Widget build(BuildContext context) {
+    final live = room.phase == RoomPhase.live;
+    final offer = room.updateOffer;
     return Row(
       children: [
         Expanded(
@@ -526,7 +528,7 @@ class _Header extends StatelessWidget {
               ),
               const SizedBox(height: 2),
               Text(
-                roomName,
+                room.roomName,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
@@ -534,9 +536,40 @@ class _Header extends StatelessWidget {
                   fontWeight: FontWeight.w600,
                 ),
               ),
+              if (room.updateNote != null)
+                Text(
+                  room.updateNote!,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: ConnectColors.muted,
+                    fontSize: 12,
+                  ),
+                ),
             ],
           ),
         ),
+        TextButton(
+          key: const Key('messages'),
+          onPressed: live ? () => showChat(context, room) : null,
+          style: TextButton.styleFrom(
+            foregroundColor: ConnectColors.cyan,
+            visualDensity: VisualDensity.compact,
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          ),
+          child: const Text('Chat'),
+        ),
+        if (offer != null)
+          TextButton(
+            key: const Key('install-update'),
+            onPressed: room.updateBusy ? null : room.installUpdate,
+            style: TextButton.styleFrom(
+              foregroundColor: ConnectColors.cyan,
+              visualDensity: VisualDensity.compact,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            child: const Text('Update'),
+          ),
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
           decoration: BoxDecoration(

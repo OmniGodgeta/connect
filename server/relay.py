@@ -13,7 +13,8 @@ mono, at the sample rate the apps agreed on. The relay does not care
 about the rate; it forwards bytes from whoever holds that room's floor.
 
 A photo is a text frame, never a binary frame. The JPEG stays under
-24 KB. Older apps ignore the message type and keep working.
+24 KB. A typed line is also a text frame. Older apps ignore unknown
+message types and keep talking.
 """
 
 from __future__ import annotations
@@ -40,6 +41,8 @@ MAX_PEOPLE = 24
 MAX_ROOMS = 16
 MAX_FRAME = 32_000
 MAX_PHOTO = 24 * 1024
+MAX_CHAT = 240
+MAX_CHAT_LINES = 40
 _ID = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
 
 
@@ -54,6 +57,18 @@ def clean_name(raw: Any) -> str | None:
 
 def valid_id(raw: Any) -> bool:
     return isinstance(raw, str) and _ID.fullmatch(raw) is not None
+
+
+def clean_chat(raw: Any) -> str | None:
+    """One line, trimmed, at most 240 characters. Empty or control text is ignored."""
+    if not isinstance(raw, str):
+        return None
+    text = unicodedata.normalize("NFC", " ".join(raw.split()))
+    if not text or len(text) > MAX_CHAT:
+        return None
+    if any(unicodedata.category(ch).startswith("C") for ch in text):
+        return None
+    return text
 
 
 def photo_bytes(raw: Any) -> bytes | None:
@@ -97,6 +112,7 @@ class Room:
         self.max_rooms = max_rooms
         self.clients: dict[str, Client] = {}
         self.speakers: dict[str, str] = {}
+        self.lines: dict[str, list[dict[str, str]]] = {}
         self._deadlines: dict[str, float] = {}
         self._lock = asyncio.Lock()
         self._watch = True
@@ -115,6 +131,10 @@ class Room:
 
     def _others_in(self, room_name: str, ident: str) -> int:
         return sum(1 for c in self.clients.values() if c.room == room_name and c.id != ident)
+
+    def _drop_chat_locked(self, room_name: str) -> None:
+        if all(client.room != room_name for client in self.clients.values()):
+            self.lines.pop(room_name, None)
 
     def _release_locked(self, room_name: str, ident: str) -> bool:
         if self.speakers.get(room_name) != ident:
@@ -182,6 +202,8 @@ class Room:
                     photo=old.photo if old is not None else None,
                 )
                 self.clients[ident] = client
+                if old is not None and old.room != room_name:
+                    self._drop_chat_locked(old.room)
         if blocked:
             await _send(ws, {"t": "error", "code": "rooms"})
             await ws.close(1008, "rooms")
@@ -201,6 +223,7 @@ class Room:
         await self._send_room_photos(client)
         if client.photo:
             await self._broadcast_photo(room_name, client.id, client.photo)
+        await self._send_chatlog(client)
         if old is not None and old.room != room_name:
             await self._broadcast_roster(old.room)
         if cleared_room is not None and old is not None:
@@ -229,6 +252,8 @@ class Room:
             await self.subscribe_rooms(client, msg.get("watch") is not False)
         elif kind == "photo":
             await self.photo(client, msg.get("jpeg"))
+        elif kind == "say":
+            await self.say(client, msg.get("text"))
 
     async def subscribe_rooms(self, client: Client, watch: bool) -> None:
         rows: list[dict[str, Any]] | None = None
@@ -277,6 +302,7 @@ class Room:
                 old_room = client.room
                 was_speaker = self._release_locked(old_room, client.id)
                 client.room = room_name
+                self._drop_chat_locked(old_room)
         if same:
             await _send(
                 client.ws,
@@ -301,6 +327,7 @@ class Room:
         await self._send_room_photos(client)
         if client.photo:
             await self._broadcast_photo(room_name, client.id, client.photo)
+        await self._send_chatlog(client)
         await self._push_rooms()
         log.info("move id=%s room=%s", client.id, room_name)
 
@@ -318,6 +345,25 @@ class Room:
             blob = client.photo
         log.info("photo id=%s bytes=%s", client.id, 0 if blob is None else len(blob))
         await self._broadcast_photo(room_name, client.id, blob)
+
+    async def say(self, client: Client, raw: Any) -> None:
+        text = clean_chat(raw)
+        if text is None:
+            return
+        room_name = client.room
+        line: dict[str, str]
+        async with self._lock:
+            if self.clients.get(client.id) is not client:
+                return
+            room_name = client.room
+            line = {"id": client.id, "name": client.name, "text": text}
+            bucket = self.lines.setdefault(room_name, [])
+            bucket.append(line)
+            if len(bucket) > MAX_CHAT_LINES:
+                del bucket[: len(bucket) - MAX_CHAT_LINES]
+            targets = [c for c in self.clients.values() if c.room == room_name]
+        log.info("say id=%s room=%s chars=%s", client.id, room_name, len(text))
+        await self._send_many(targets, {"t": "say", **line})
 
     async def ptt(self, client: Client, down: bool) -> None:
         granted = False
@@ -380,6 +426,7 @@ class Room:
             room_name = client.room
             del self.clients[client.id]
             should_end = self._release_locked(room_name, client.id)
+            self._drop_chat_locked(room_name)
         log.info("leave id=%s room=%s people=%s", client.id, room_name, len(self.clients))
         if should_end:
             await self._broadcast_talk(room_name, client.id, client.name, False)
@@ -406,6 +453,15 @@ class Room:
                 await _send(client.ws, {"t": "floor", "ok": False, "reason": "timeout"})
                 await self._broadcast_talk(client.room, client.id, client.name, False)
                 await self._broadcast_roster(client.room)
+
+    async def _send_chatlog(self, client: Client) -> None:
+        async with self._lock:
+            if self.clients.get(client.id) is not client:
+                return
+            lines = list(self.lines.get(client.room, []))
+        if not lines:
+            return
+        await _send(client.ws, {"t": "chatlog", "lines": lines})
 
     async def _send_room_photos(self, client: Client) -> None:
         async with self._lock:

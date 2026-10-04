@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'alerts.dart';
@@ -15,6 +16,8 @@ import 'talk_settings.dart';
 import 'theme.dart';
 import 'ui/name_page.dart';
 import 'ui/room_page.dart';
+import 'update.dart';
+import 'update_client.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -38,7 +41,16 @@ Future<void> main() async {
     levelStore: PrefsLevelStore(prefs),
     pickPhoto: pickGalleryPhoto,
     alerts: alerts,
+    checkUpdate: () async {
+      final info = await PackageInfo.fromPlatform();
+      return fetchLatestRelease(info.version);
+    },
+    installRelease: (UpdateOffer offer) async {
+      final path = await downloadRelease(offer);
+      return installDownloaded(path);
+    },
   );
+  listenForInstallStatus(controller.noteInstallProblem);
   alerts.bind((down) {
     if (down) {
       controller.sideHold();
