@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
-"""One-room push-to-talk relay.
+"""Push-to-talk relay with named rooms.
 
 Listens on localhost. Tailscale serve publishes it to the tailnet.
-There are no accounts. Anyone who can open the socket is in the room.
+There are no accounts. Anyone who can open the socket can join a room.
+
+A hello with no room lands in Everyone, which is always listed. A hello
+or a later join with a room name creates that room when it is new.
+Empty rooms disappear. Each room has its own floor and roster.
 
 Text frames are JSON. Binary frames are PCM signed-16 little-endian,
 mono, at the sample rate the apps agreed on. The relay does not care
-about the rate; it forwards bytes from whoever holds the floor.
+about the rate; it forwards bytes from whoever holds that room's floor.
 """
 
 from __future__ import annotations
@@ -27,7 +31,9 @@ from websockets.http11 import Request, Response
 
 log = logging.getLogger("connect.relay")
 
+DEFAULT_ROOM = "Everyone"
 MAX_PEOPLE = 24
+MAX_ROOMS = 16
 MAX_FRAME = 32_000
 _ID = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
 
@@ -50,20 +56,62 @@ class Client:
     id: str
     name: str
     ws: ServerConnection
+    room: str = DEFAULT_ROOM
+    wants_rooms: bool = False
 
 
 class Room:
-    def __init__(self, floor_audio_timeout: float = 8.0, watch_interval: float = 0.5) -> None:
+    def __init__(
+        self,
+        floor_audio_timeout: float = 8.0,
+        watch_interval: float = 0.5,
+        max_people: int = MAX_PEOPLE,
+        max_rooms: int = MAX_ROOMS,
+    ) -> None:
         self.floor_audio_timeout = floor_audio_timeout
         self.watch_interval = watch_interval
+        self.max_people = max_people
+        self.max_rooms = max_rooms
         self.clients: dict[str, Client] = {}
-        self.speaker_id: str | None = None
-        self._deadline: float | None = None
+        self.speakers: dict[str, str] = {}
+        self._deadlines: dict[str, float] = {}
         self._lock = asyncio.Lock()
         self._watch = True
 
     def stop(self) -> None:
         self._watch = False
+
+    def _occupied(self, ignoring: str | None = None) -> set[str]:
+        return {c.room for c in self.clients.values() if c.id != ignoring}
+
+    def _can_open(self, room_name: str, ignoring: str | None = None) -> bool:
+        occupied = self._occupied(ignoring)
+        if room_name in occupied or room_name == DEFAULT_ROOM:
+            return True
+        return len(occupied) < self.max_rooms
+
+    def _others_in(self, room_name: str, ident: str) -> int:
+        return sum(1 for c in self.clients.values() if c.room == room_name and c.id != ident)
+
+    def _release_locked(self, room_name: str, ident: str) -> bool:
+        if self.speakers.get(room_name) != ident:
+            return False
+        self.speakers.pop(room_name, None)
+        self._deadlines.pop(room_name, None)
+        return True
+
+    def _rows_locked(self) -> list[dict[str, Any]]:
+        counts: dict[str, int] = {}
+        for client in self.clients.values():
+            counts[client.room] = counts.get(client.room, 0) + 1
+        counts.setdefault(DEFAULT_ROOM, 0)
+        names = [DEFAULT_ROOM] + sorted(name for name in counts if name != DEFAULT_ROOM)
+        return [{"name": name, "people": counts[name]} for name in names]
+
+    def _room_name(self, msg: dict[str, Any]) -> str | None:
+        if "room" not in msg or msg.get("room") is None:
+            return DEFAULT_ROOM
+        return clean_name(msg.get("room"))
 
     async def hello(self, ws: ServerConnection, raw: str) -> Client | None:
         try:
@@ -80,22 +128,35 @@ class Room:
             await _send(ws, {"t": "error", "code": "name"})
             await ws.close(1008, "bad name")
             return None
+        room_name = self._room_name(msg)
+        if room_name is None:
+            await _send(ws, {"t": "error", "code": "room"})
+            await ws.close(1008, "bad room")
+            return None
 
         old: Client | None = None
         client: Client | None = None
-        cleared = False
+        cleared_room: str | None = None
         full = False
+        blocked = False
         async with self._lock:
-            if ident not in self.clients and len(self.clients) >= MAX_PEOPLE:
+            if not self._can_open(room_name, ident):
+                blocked = True
+            elif self._others_in(room_name, ident) >= self.max_people:
                 full = True
             else:
                 old = self.clients.get(ident)
-                client = Client(ident, name, ws)
+                if old is not None and self._release_locked(old.room, ident):
+                    cleared_room = old.room
+                if self.speakers.get(room_name) == ident:
+                    self._release_locked(room_name, ident)
+                    cleared_room = cleared_room or room_name
+                client = Client(ident, name, ws, room_name)
                 self.clients[ident] = client
-                if self.speaker_id == ident:
-                    self.speaker_id = None
-                    self._deadline = None
-                    cleared = True
+        if blocked:
+            await _send(ws, {"t": "error", "code": "rooms"})
+            await ws.close(1008, "rooms")
+            return None
         if full:
             await _send(ws, {"t": "error", "code": "full"})
             await ws.close(1013, "full")
@@ -105,12 +166,15 @@ class Room:
                 await old.ws.close(4000, "replaced")
             except ConnectionClosed:
                 pass
-        if cleared and old is not None:
-            await self._broadcast_talk(old.id, old.name, False)
         assert client is not None
-        await _send(ws, {"t": "welcome", "id": ident, "name": name})
-        await self._broadcast_roster()
-        log.info("join id=%s name=%s people=%s", ident, name, len(self.clients))
+        await _send(ws, {"t": "welcome", "id": ident, "name": name, "room": room_name})
+        await self._broadcast_roster(room_name)
+        if old is not None and old.room != room_name:
+            await self._broadcast_roster(old.room)
+        if cleared_room is not None and old is not None:
+            await self._broadcast_talk(cleared_room, old.id, old.name, False)
+        await self._push_rooms()
+        log.info("join id=%s name=%s room=%s people=%s", ident, name, room_name, len(self.clients))
         return client
 
     async def text(self, client: Client, raw: str) -> None:
@@ -127,36 +191,103 @@ class Room:
                 await self.ptt(client, down)
         elif kind == "hello":
             await self.rename(client, msg.get("name"))
+        elif kind == "join":
+            await self.move(client, msg.get("room"))
+        elif kind == "rooms":
+            await self.subscribe_rooms(client, msg.get("watch") is not False)
+
+    async def subscribe_rooms(self, client: Client, watch: bool) -> None:
+        rows: list[dict[str, Any]] | None = None
+        async with self._lock:
+            if self.clients.get(client.id) is not client:
+                return
+            client.wants_rooms = watch
+            if watch:
+                rows = self._rows_locked()
+        if rows is not None:
+            await _send(client.ws, {"t": "rooms", "rooms": rows})
 
     async def rename(self, client: Client, raw: Any) -> None:
         name = clean_name(raw)
         if name is None:
             await _send(client.ws, {"t": "error", "code": "name"})
             return
+        room_name = DEFAULT_ROOM
         async with self._lock:
             if self.clients.get(client.id) is not client:
                 return
             client.name = name
-        await self._broadcast_roster()
+            room_name = client.room
+        await self._broadcast_roster(room_name)
+
+    async def move(self, client: Client, raw: Any) -> None:
+        room_name = clean_name(raw)
+        if room_name is None:
+            await _send(client.ws, {"t": "error", "code": "room"})
+            return
+        old_room: str | None = None
+        was_speaker = False
+        same = False
+        full = False
+        blocked = False
+        async with self._lock:
+            if self.clients.get(client.id) is not client:
+                return
+            if client.room == room_name:
+                same = True
+            elif not self._can_open(room_name, client.id):
+                blocked = True
+            elif self._others_in(room_name, client.id) >= self.max_people:
+                full = True
+            else:
+                old_room = client.room
+                was_speaker = self._release_locked(old_room, client.id)
+                client.room = room_name
+        if same:
+            await _send(
+                client.ws,
+                {"t": "welcome", "id": client.id, "name": client.name, "room": room_name},
+            )
+            return
+        if blocked:
+            await _send(client.ws, {"t": "error", "code": "rooms"})
+            return
+        if full:
+            await _send(client.ws, {"t": "error", "code": "full"})
+            return
+        await _send(
+            client.ws,
+            {"t": "welcome", "id": client.id, "name": client.name, "room": room_name},
+        )
+        if was_speaker and old_room is not None:
+            await self._broadcast_talk(old_room, client.id, client.name, False)
+        if old_room is not None:
+            await self._broadcast_roster(old_room)
+        await self._broadcast_roster(room_name)
+        await self._push_rooms()
+        log.info("move id=%s room=%s", client.id, room_name)
 
     async def ptt(self, client: Client, down: bool) -> None:
         granted = False
         released = False
         denied_by: str | None = None
+        room_name = client.room
         async with self._lock:
             if self.clients.get(client.id) is not client:
                 return
+            room_name = client.room
+            holder_id = self.speakers.get(room_name)
             if down:
-                if self.speaker_id is None or self.speaker_id == client.id:
-                    self.speaker_id = client.id
-                    self._deadline = time.monotonic() + self.floor_audio_timeout
+                if holder_id is None or holder_id == client.id:
+                    self.speakers[room_name] = client.id
+                    self._deadlines[room_name] = time.monotonic() + self.floor_audio_timeout
                     granted = True
                 else:
-                    holder = self.clients.get(self.speaker_id)
-                    denied_by = holder.name if holder is not None else None
-            elif self.speaker_id == client.id:
-                self.speaker_id = None
-                self._deadline = None
+                    holder = self.clients.get(holder_id)
+                    if holder is not None and holder.room == room_name:
+                        denied_by = holder.name
+            elif holder_id == client.id:
+                self._release_locked(room_name, client.id)
                 released = True
         if down:
             payload: dict[str, Any] = {"t": "floor", "ok": granted}
@@ -164,73 +295,91 @@ class Room:
                 payload["by"] = denied_by
             await _send(client.ws, payload)
             if granted:
-                log.info("floor id=%s name=%s", client.id, client.name)
-                await self._broadcast_talk(client.id, client.name, True)
-                await self._broadcast_roster()
+                log.info("floor id=%s name=%s room=%s", client.id, client.name, room_name)
+                await self._broadcast_talk(room_name, client.id, client.name, True)
+                await self._broadcast_roster(room_name)
             return
         if released:
-            await self._broadcast_talk(client.id, client.name, False)
-            await self._broadcast_roster()
+            await self._broadcast_talk(room_name, client.id, client.name, False)
+            await self._broadcast_roster(room_name)
 
     async def audio(self, client: Client, frame: bytes) -> None:
         if len(frame) < 2 or len(frame) > MAX_FRAME or len(frame) % 2:
             return
+        room_name = client.room
         async with self._lock:
-            if self.speaker_id != client.id or self.clients.get(client.id) is not client:
+            if self.clients.get(client.id) is not client:
                 return
-            self._deadline = time.monotonic() + self.floor_audio_timeout
-            targets = [c for c in self.clients.values() if c is not client]
+            room_name = client.room
+            if self.speakers.get(room_name) != client.id:
+                return
+            self._deadlines[room_name] = time.monotonic() + self.floor_audio_timeout
+            targets = [
+                c for c in self.clients.values() if c.room == room_name and c is not client
+            ]
         await self._send_many(targets, frame)
 
     async def leave_if_current(self, client: Client) -> None:
         should_end = False
+        room_name = client.room
         async with self._lock:
             if self.clients.get(client.id) is not client:
                 return
+            room_name = client.room
             del self.clients[client.id]
-            if self.speaker_id == client.id:
-                self.speaker_id = None
-                self._deadline = None
-                should_end = True
-        log.info("leave id=%s people=%s", client.id, len(self.clients))
+            should_end = self._release_locked(room_name, client.id)
+        log.info("leave id=%s room=%s people=%s", client.id, room_name, len(self.clients))
         if should_end:
-            await self._broadcast_talk(client.id, client.name, False)
-        await self._broadcast_roster()
+            await self._broadcast_talk(room_name, client.id, client.name, False)
+        await self._broadcast_roster(room_name)
+        await self._push_rooms()
 
     async def watch_floor(self) -> None:
         while self._watch:
             await asyncio.sleep(self.watch_interval)
-            expired: Client | None = None
+            expired: list[Client] = []
+            now = time.monotonic()
             async with self._lock:
-                if (
-                    self.speaker_id is not None
-                    and self._deadline is not None
-                    and time.monotonic() >= self._deadline
-                ):
-                    expired = self.clients.get(self.speaker_id)
-                    self.speaker_id = None
-                    self._deadline = None
-            if expired is None:
-                continue
-            log.info("floor timeout id=%s", expired.id)
-            await _send(expired.ws, {"t": "floor", "ok": False, "reason": "timeout"})
-            await self._broadcast_talk(expired.id, expired.name, False)
-            await self._broadcast_roster()
+                for room_name, deadline in list(self._deadlines.items()):
+                    if now < deadline:
+                        continue
+                    ident = self.speakers.get(room_name)
+                    client = self.clients.get(ident) if ident is not None else None
+                    self.speakers.pop(room_name, None)
+                    self._deadlines.pop(room_name, None)
+                    if client is not None and client.room == room_name:
+                        expired.append(client)
+            for client in expired:
+                log.info("floor timeout id=%s room=%s", client.id, client.room)
+                await _send(client.ws, {"t": "floor", "ok": False, "reason": "timeout"})
+                await self._broadcast_talk(client.room, client.id, client.name, False)
+                await self._broadcast_roster(client.room)
 
-    async def _broadcast_talk(self, ident: str, name: str, down: bool) -> None:
+    async def _broadcast_talk(self, room_name: str, ident: str, name: str, down: bool) -> None:
         async with self._lock:
-            targets = list(self.clients.values())
+            targets = [c for c in self.clients.values() if c.room == room_name]
         await self._send_many(targets, {"t": "talk", "id": ident, "name": name, "down": down})
 
-    async def _broadcast_roster(self) -> None:
+    async def _broadcast_roster(self, room_name: str) -> None:
         async with self._lock:
             payload = {
                 "t": "roster",
-                "people": [{"id": c.id, "name": c.name} for c in self.clients.values()],
-                "speaker": self.speaker_id,
+                "people": [
+                    {"id": c.id, "name": c.name}
+                    for c in self.clients.values()
+                    if c.room == room_name
+                ],
+                "speaker": self.speakers.get(room_name),
             }
-            targets = list(self.clients.values())
+            targets = [c for c in self.clients.values() if c.room == room_name]
         await self._send_many(targets, payload)
+
+    async def _push_rooms(self) -> None:
+        async with self._lock:
+            rows = self._rows_locked()
+            targets = [c for c in self.clients.values() if c.wants_rooms]
+        if targets:
+            await self._send_many(targets, {"t": "rooms", "rooms": rows})
 
     async def _send_many(self, targets: list[Client], data: dict[str, Any] | bytes) -> None:
         failed: list[Client] = []

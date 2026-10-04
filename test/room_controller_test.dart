@@ -6,6 +6,7 @@ import 'package:connect/name_store.dart';
 import 'package:connect/protocol.dart';
 import 'package:connect/relay.dart';
 import 'package:connect/room_controller.dart';
+import 'package:connect/room_store.dart';
 import 'package:connect/talk_settings.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -28,7 +29,14 @@ class FakeRelay implements Relay {
   }
 
   @override
-  void hello(String id, String name) => log.add('hello:$name');
+  void hello(String id, String name, {String? room}) =>
+      log.add('hello:$name:${room ?? ''}');
+
+  @override
+  void joinRoom(String room) => log.add('join:$room');
+
+  @override
+  void watchRooms(bool watch) => log.add('rooms:$watch');
 
   @override
   void ptt(bool down) => log.add('ptt:$down');
@@ -107,6 +115,7 @@ RoomController buildRoom({
   FakeAudio? audio,
   FakeAlerts? alerts,
   MemoryTalkSettings? settings,
+  MemoryRoomStore? rooms,
   Scheduler? schedule,
 }) {
   return RoomController(
@@ -114,6 +123,7 @@ RoomController buildRoom({
     audio: audio ?? FakeAudio(),
     names: names ?? MemoryNameStore(),
     settings: settings,
+    rooms: rooms,
     alerts: alerts ?? FakeAlerts(),
     schedule: schedule ?? (_, _) => () {},
   );
@@ -298,5 +308,46 @@ void main() {
     expect(audio.mic, isTrue);
     expect(audio.starts, starts + 1);
     expect(settings.current.noiseCancel, isFalse);
+  });
+
+  test('creating a room joins it and remembers the name', () async {
+    final relay = FakeRelay();
+    final store = MemoryRoomStore();
+    final names = MemoryNameStore()
+      ..id = 'abc12345abc12345'
+      ..name = 'Eric';
+    final room = buildRoom(names: names, relay: relay, rooms: store);
+    await room.boot();
+    relay.emit(WelcomeEvent(room.selfId!, 'Eric', room: everyoneRoom));
+    relay.emit(RosterEvent([Person(room.selfId!, 'Eric')], null));
+    await pumpEventQueue();
+    expect(relay.log, contains('hello:Eric:Everyone'));
+
+    await room.openRooms();
+    expect(room.picking, isTrue);
+    expect(relay.log, contains('rooms:true'));
+
+    await room.joinRoom('   ');
+    expect(room.picking, isTrue);
+    expect(room.banner, 'Use 1 to 24 characters.');
+
+    await room.joinRoom('Cabin');
+    expect(room.picking, isFalse);
+    expect(relay.log, contains('join:Cabin'));
+    expect(room.roomName, everyoneRoom);
+
+    relay.emit(const ErrorEvent('rooms'));
+    await pumpEventQueue();
+    expect(room.roomName, everyoneRoom);
+    expect(room.statusLine, 'Too many rooms are open.');
+
+    relay.emit(WelcomeEvent(room.selfId!, 'Eric', room: 'Cabin'));
+    relay.emit(
+      const RoomsEvent([RoomInfo(everyoneRoom, 0), RoomInfo('Cabin', 1)]),
+    );
+    await pumpEventQueue();
+    expect(room.roomName, 'Cabin');
+    expect(store.current, 'Cabin');
+    expect(room.availableRooms.last.people, 1);
   });
 }

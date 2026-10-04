@@ -7,6 +7,7 @@ import 'audio_io.dart';
 import 'name_store.dart';
 import 'relay.dart';
 import 'room_controller.dart';
+import 'room_store.dart';
 import 'talk_settings.dart';
 import 'theme.dart';
 import 'ui/name_page.dart';
@@ -28,6 +29,7 @@ Future<void> main() async {
     audio: DeviceAudio(),
     names: PrefsNameStore(prefs),
     settings: PrefsTalkSettings(prefs),
+    rooms: PrefsRoomStore(prefs),
     alerts: PlatformAlerts(),
   );
   runApp(ConnectApp(controller: controller));
@@ -74,7 +76,7 @@ class _ConnectAppState extends State<ConnectApp> {
           room.join();
         },
       ),
-      _ => RoomPage(room: room),
+      _ => room.picking ? RoomsPage(room: room) : RoomPage(room: room),
     };
     return MaterialApp(
       title: 'Connect',

@@ -8,6 +8,7 @@ import 'config.dart';
 import 'name_store.dart';
 import 'protocol.dart';
 import 'relay.dart';
+import 'room_store.dart';
 import 'talk_settings.dart';
 import 'voice_gate.dart';
 
@@ -23,20 +24,26 @@ class RoomController extends ChangeNotifier {
     required this.names,
     required this.alerts,
     TalkSettingsStore? settings,
+    RoomStore? rooms,
     this.schedule = _timer,
-  }) : settings = settings ?? MemoryTalkSettings();
+  }) : settings = settings ?? MemoryTalkSettings(),
+       rooms = rooms ?? MemoryRoomStore();
 
   final Relay relay;
   final AudioEngine audio;
   final NameStore names;
   final RoomAlerts alerts;
   final TalkSettingsStore settings;
+  final RoomStore rooms;
   final Scheduler schedule;
   final VoiceGate _gate = VoiceGate();
 
   RoomPhase phase = RoomPhase.needName;
   String? selfId;
   String? name;
+  String roomName = everyoneRoom;
+  List<RoomInfo> availableRooms = const [RoomInfo(everyoneRoom, 0)];
+  bool picking = false;
   List<Person> people = const [];
   String? speakerId;
   String? speakerName;
@@ -88,7 +95,7 @@ class RoomController extends ChangeNotifier {
     if (speakerId != null && speakerId != selfId && speakerName != null) {
       return '$speakerName is talking';
     }
-    return 'In the room';
+    return 'In $roomName';
   }
 
   static Cancel _timer(Duration delay, void Function() fn) {
@@ -99,9 +106,11 @@ class RoomController extends ChangeNotifier {
   Future<void> boot() async {
     final saved = await names.load();
     final talk = await settings.load();
+    final savedRoom = await rooms.load();
     if (_closed) return;
     mode = talk.mode;
     noiseCancel = talk.noiseCancel;
+    roomName = cleanName(savedRoom) ?? everyoneRoom;
     selfId = saved.id ?? newId();
     name = saved.name;
     if (name == null) {
@@ -125,7 +134,7 @@ class RoomController extends ChangeNotifier {
     if (_closed) return;
     banner = null;
     if (phase == RoomPhase.live || phase == RoomPhase.connecting) {
-      relay.hello(selfId!, name!);
+      relay.hello(selfId!, name!, room: roomName);
       notifyListeners();
       return;
     }
@@ -148,6 +157,7 @@ class RoomController extends ChangeNotifier {
 
   Future<void> leave() async {
     joined = false;
+    picking = false;
     _gen += 1;
     _pending?.call();
     _pending = null;
@@ -211,6 +221,53 @@ class RoomController extends ChangeNotifier {
     return settings.save(TalkSettings(mode: mode, noiseCancel: noiseCancel));
   }
 
+  Future<void> openRooms() async {
+    if (phase != RoomPhase.live || _closed) return;
+    if (_wantFloor || _haveFloor) {
+      _wantFloor = false;
+      _haveFloor = false;
+      holding = false;
+      relay.ptt(false);
+    }
+    _gate.reset();
+    _pendingAudio.clear();
+    picking = true;
+    relay.watchRooms(true);
+    if (!_closed) notifyListeners();
+    await _kickMic();
+  }
+
+  Future<void> closeRooms() async {
+    if (!picking || _closed) return;
+    picking = false;
+    banner = null;
+    relay.watchRooms(false);
+    notifyListeners();
+    await _kickMic();
+  }
+
+  Future<void> joinRoom(String raw) async {
+    final cleaned = cleanName(raw);
+    if (cleaned == null) {
+      banner = 'Use 1 to 24 characters.';
+      notifyListeners();
+      return;
+    }
+    if (phase != RoomPhase.live || _closed) return;
+    if (cleaned == roomName) {
+      await closeRooms();
+      return;
+    }
+    picking = false;
+    relay.watchRooms(false);
+    if (_wantFloor || _haveFloor) relay.ptt(false);
+    _dropLocalFloor();
+    banner = 'Joining $cleaned…';
+    notifyListeners();
+    relay.joinRoom(cleaned);
+    await _kickMic();
+  }
+
   Future<void> hold() async {
     if (mode != TalkMode.hold) return;
     if (phase != RoomPhase.live || _wantFloor || _haveFloor) return;
@@ -259,7 +316,7 @@ class RoomController extends ChangeNotifier {
         _onEvent(event, gen);
       });
       if (gen != _gen || _closed) return;
-      relay.hello(selfId!, name!);
+      relay.hello(selfId!, name!, room: roomName);
     } catch (_) {
       if (gen != _gen || _closed) return;
       _fail(gen);
@@ -273,9 +330,17 @@ class RoomController extends ChangeNotifier {
         phase = RoomPhase.live;
         banner = null;
         _attempt = 0;
+        final nextRoom = cleanName(event.room ?? '');
+        if (nextRoom != null && nextRoom != roomName) {
+          roomName = nextRoom;
+          unawaited(rooms.save(roomName));
+        }
         _pushNotification();
         notifyListeners();
         _kickMic();
+      case RoomsEvent():
+        if (event.rooms.isNotEmpty) availableRooms = event.rooms;
+        notifyListeners();
       case RosterEvent():
         people = event.people;
         _applySpeaker(event.speakerId, _nameFor(event.speakerId));
@@ -302,9 +367,15 @@ class RoomController extends ChangeNotifier {
       case AudioEvent():
         if (_listeningTo != null) audio.play(event.pcm);
       case ErrorEvent():
-        banner = 'That name did not stick. Try another.';
+        banner = switch (event.code) {
+          'full' => 'That room is full.',
+          'rooms' => 'Too many rooms are open.',
+          'room' => 'Use 1 to 24 characters.',
+          _ => 'That name did not stick. Try another.',
+        };
         notifyListeners();
       case DisconnectedEvent():
+        picking = false;
         _dropLocalFloor();
         _fail(gen);
     }
@@ -351,7 +422,7 @@ class RoomController extends ChangeNotifier {
   }
 
   bool get _needMic {
-    if (phase != RoomPhase.live || _closed) return false;
+    if (phase != RoomPhase.live || picking || _closed) return false;
     if (mode == TalkMode.hold) return _haveFloor;
     if (voiceMuted) return false;
     if (speakerId != null && speakerId != selfId && !_haveFloor) return false;

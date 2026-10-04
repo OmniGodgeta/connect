@@ -13,6 +13,18 @@ void main() {
     final welcome = parseEvent('{"t":"welcome","id":"abc12345","name":"Ada"}');
     expect(welcome, isA<WelcomeEvent>());
     expect((welcome! as WelcomeEvent).name, 'Ada');
+    expect((welcome as WelcomeEvent).room, isNull);
+
+    final placed = parseEvent(
+      '{"t":"welcome","id":"abc12345","name":"Ada","room":"Cabin"}',
+    );
+    expect((placed! as WelcomeEvent).room, 'Cabin');
+
+    final rooms = parseEvent(
+      '{"t":"rooms","rooms":[{"name":"Everyone","people":1},{"name":"Cabin","people":2}]}',
+    );
+    expect(rooms, isA<RoomsEvent>());
+    expect((rooms! as RoomsEvent).rooms.last.people, 2);
 
     final roster = parseEvent(
       '{"t":"roster","people":[{"id":"abc12345","name":"Ada"}],"speaker":null}',

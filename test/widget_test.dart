@@ -51,5 +51,22 @@ void main() {
     await tester.tap(find.text('Voice'));
     await tester.pump();
     expect(find.text('Listening for your voice'), findsOneWidget);
+    expect(find.text('Everyone'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('rooms')));
+    await tester.pump();
+    expect(find.text('Create'), findsOneWidget);
+    expect(find.text('here'), findsOneWidget);
+
+    await tester.enterText(find.byKey(const Key('create-room-name')), 'Cabin');
+    await tester.tap(find.byKey(const Key('create-room')));
+    await tester.pump();
+    expect(relay.log, contains('join:Cabin'));
+
+    relay.emit(WelcomeEvent(room.selfId!, 'Eric', room: 'Cabin'));
+    relay.emit(RosterEvent([Person(room.selfId!, 'Eric')], null));
+    await tester.pump();
+    expect(find.text('Cabin'), findsOneWidget);
+    expect(find.text('Create'), findsNothing);
   });
 }

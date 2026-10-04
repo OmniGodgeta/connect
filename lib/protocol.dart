@@ -9,15 +9,32 @@ class Person {
   final String name;
 }
 
+/// The room a hello joins when it does not name one. The relay always lists it.
+const everyoneRoom = 'Everyone';
+
+class RoomInfo {
+  const RoomInfo(this.name, this.people);
+
+  final String name;
+  final int people;
+}
+
 sealed class RelayEvent {
   const RelayEvent();
 }
 
 class WelcomeEvent extends RelayEvent {
-  const WelcomeEvent(this.id, this.name);
+  const WelcomeEvent(this.id, this.name, {this.room});
 
   final String id;
   final String name;
+  final String? room;
+}
+
+class RoomsEvent extends RelayEvent {
+  const RoomsEvent(this.rooms);
+
+  final List<RoomInfo> rooms;
 }
 
 class RosterEvent extends RelayEvent {
@@ -96,7 +113,11 @@ RelayEvent? parseEvent(String raw) {
     case 'welcome':
       final id = decoded['id'];
       final name = decoded['name'];
-      if (id is String && name is String) return WelcomeEvent(id, name);
+      if (id is String && name is String) {
+        return WelcomeEvent(id, name, room: _string(decoded['room']));
+      }
+    case 'rooms':
+      return RoomsEvent(_rooms(decoded['rooms']));
     case 'roster':
       return RosterEvent(
         _people(decoded['people']),
@@ -126,6 +147,18 @@ RelayEvent? parseEvent(String raw) {
 
 String? _string(Object? value) => value is String ? value : null;
 
+List<RoomInfo> _rooms(Object? raw) {
+  if (raw is! List) return const [];
+  final rooms = <RoomInfo>[];
+  for (final item in raw) {
+    if (item is! Map) continue;
+    final name = item['name'];
+    final people = item['people'];
+    if (name is String && people is int) rooms.add(RoomInfo(name, people));
+  }
+  return rooms;
+}
+
 List<Person> _people(Object? raw) {
   if (raw is! List) return const [];
   final people = <Person>[];
@@ -138,7 +171,12 @@ List<Person> _people(Object? raw) {
   return people;
 }
 
-String helloMessage(String id, String name) =>
-    jsonEncode({'t': 'hello', 'id': id, 'name': name});
+String helloMessage(String id, String name, {String? room}) =>
+    jsonEncode({'t': 'hello', 'id': id, 'name': name, 'room': ?room});
 
 String pttMessage(bool down) => jsonEncode({'t': 'ptt', 'down': down});
+
+String joinMessage(String room) => jsonEncode({'t': 'join', 'room': room});
+
+String roomsMessage({bool watch = true}) =>
+    jsonEncode({'t': 'rooms', if (!watch) 'watch': false});

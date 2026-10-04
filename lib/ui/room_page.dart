@@ -24,7 +24,11 @@ class RoomPage extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(20, 12, 20, 12),
           child: Column(
             children: [
-              _Header(live: live, line: room.peopleLine),
+              _Header(
+                live: live,
+                roomName: room.roomName,
+                line: room.peopleLine,
+              ),
               const SizedBox(height: 14),
               Expanded(child: _Roster(room: room)),
               const SizedBox(height: 8),
@@ -68,6 +72,15 @@ class RoomPage extends StatelessWidget {
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
+                  TextButton(
+                    key: const Key('rooms'),
+                    onPressed: live
+                        ? () {
+                            room.openRooms();
+                          }
+                        : null,
+                    child: const Text('Rooms'),
+                  ),
                   TextButton(
                     onPressed: () => _rename(context),
                     child: const Text('Change name'),
@@ -165,8 +178,9 @@ class _TalkControls extends StatelessWidget {
           style: ButtonStyle(
             visualDensity: VisualDensity.compact,
             backgroundColor: WidgetStateProperty.resolveWith((states) {
-              if (states.contains(WidgetState.selected))
+              if (states.contains(WidgetState.selected)) {
                 return const Color(0xFF14586A);
+              }
               return ConnectColors.tile;
             }),
             foregroundColor: WidgetStateProperty.all(ConnectColors.text),
@@ -218,9 +232,14 @@ class _TalkControls extends StatelessWidget {
 }
 
 class _Header extends StatelessWidget {
-  const _Header({required this.live, required this.line});
+  const _Header({
+    required this.live,
+    required this.roomName,
+    required this.line,
+  });
 
   final bool live;
+  final String roomName;
   final String line;
 
   @override
@@ -242,10 +261,19 @@ class _Header extends StatelessWidget {
               ),
               const SizedBox(height: 2),
               Text(
+                roomName,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 22,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              Text(
                 line,
                 style: const TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.w600,
+                  color: ConnectColors.muted,
+                  fontSize: 14,
                 ),
               ),
             ],
@@ -341,6 +369,173 @@ class _Roster extends StatelessWidget {
               style: TextStyle(color: ConnectColors.muted, fontSize: 13),
             ),
         ],
+      ),
+    );
+  }
+}
+
+class RoomsPage extends StatefulWidget {
+  const RoomsPage({super.key, required this.room});
+
+  final RoomController room;
+
+  @override
+  State<RoomsPage> createState() => _RoomsPageState();
+}
+
+class _RoomsPageState extends State<RoomsPage> {
+  final TextEditingController _name = TextEditingController();
+
+  @override
+  void dispose() {
+    _name.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final room = widget.room;
+    final rooms = room.availableRooms;
+    return DecoratedBox(
+      decoration: const BoxDecoration(gradient: connectBackground),
+      child: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  TextButton(
+                    key: const Key('rooms-back'),
+                    onPressed: () {
+                      room.closeRooms();
+                    },
+                    child: const Text('Back'),
+                  ),
+                  const Expanded(
+                    child: Text(
+                      'Rooms',
+                      style: TextStyle(
+                        fontSize: 22,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const Text(
+                'Create a room and it shows up for friends on this network.',
+                style: TextStyle(color: ConnectColors.muted, fontSize: 14),
+              ),
+              const SizedBox(height: 12),
+              Expanded(
+                child: SingleChildScrollView(
+                  child: Column(
+                    children: [
+                      for (var index = 0; index < rooms.length; index++) ...[
+                        if (index > 0) const SizedBox(height: 8),
+                        _roomTile(room, rooms[index]),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+              if (room.banner != null) ...[
+                const SizedBox(height: 8),
+                Text(
+                  room.banner!,
+                  style: const TextStyle(
+                    color: ConnectColors.warn,
+                    fontSize: 14,
+                  ),
+                ),
+              ],
+              const SizedBox(height: 8),
+              TextField(
+                key: const Key('create-room-name'),
+                controller: _name,
+                textCapitalization: TextCapitalization.words,
+                cursorColor: ConnectColors.cyan,
+                decoration: const InputDecoration(
+                  hintText: 'Room name',
+                  filled: true,
+                  fillColor: ConnectColors.tile,
+                ),
+                onSubmitted: (value) {
+                  room.joinRoom(value);
+                },
+              ),
+              const SizedBox(height: 8),
+              FilledButton(
+                key: const Key('create-room'),
+                onPressed: () {
+                  room.joinRoom(_name.text);
+                },
+                child: const Text('Create'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _roomTile(RoomController room, RoomInfo info) {
+    final here = info.name == room.roomName;
+    final count = info.people == 1 ? '1 person' : '${info.people} people';
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        key: Key('room-${info.name}'),
+        borderRadius: BorderRadius.circular(14),
+        onTap: () {
+          room.joinRoom(info.name);
+        },
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          decoration: BoxDecoration(
+            color: here ? const Color(0xFF123844) : ConnectColors.tile,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: here
+                  ? ConnectColors.cyan.withValues(alpha: 0.8)
+                  : ConnectColors.line,
+            ),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      info.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    Text(
+                      info.people == 0 ? 'Empty' : count,
+                      style: const TextStyle(
+                        color: ConnectColors.muted,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (here)
+                const Text(
+                  'here',
+                  style: TextStyle(color: ConnectColors.cyan, fontSize: 13),
+                ),
+            ],
+          ),
+        ),
       ),
     );
   }

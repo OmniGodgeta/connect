@@ -1,8 +1,8 @@
 # Connect
 
-One room. Hold the button, or just speak. No accounts.
+Hold the button, or just speak. No accounts.
 
-Connect is an Android walkie-talkie for people already on this Tailscale network (`tail51f9d6.ts.net`). Opening the app joins the only room. The relay runs on this PC and is published with `tailscale serve`, so it is not on the public internet. A phone still needs the Tailscale app connected, or it cannot reach the room.
+Connect is an Android walkie-talkie for people already on this Tailscale network (`tail51f9d6.ts.net`). Opening the app joins Everyone. You can create another room, and friends on this network see it and can join it. The relay runs on this PC and is published with `tailscale serve`, so it is not on the public internet. A phone still needs the Tailscale app connected, or it cannot reach the room.
 
 The repo is public so a link works for friends. The release APK is the download. Being on the tailnet is the access check.
 
@@ -12,12 +12,13 @@ The repo is public so a link works for friends. The release APK is the download.
 
 1. Install [Tailscale](https://tailscale.com/download) and join this tailnet. The owner invites the phone.
 2. Install the APK from the GitHub release.
-3. Open Connect, type the name people should see, and join.
-4. Choose Hold or Voice. Hold means press the big button. Voice means just speak, and tap the button to mute. One person talks at a time.
-5. Noise cancelling is on. It uses the phone's noise suppressor, echo canceler, and automatic gain. Turn it off for the plain microphone.
-6. Leave the app in the background to keep hearing the room. Swiping it away leaves the room. This PC has to be awake.
+3. Open Connect, type the name people should see, and join. You land in Everyone.
+4. Tap Rooms to create a room or join one a friend created. One person talks at a time in each room.
+5. Choose Hold or Voice. Hold means press the big button. Voice means just speak, and tap the button to mute.
+6. Noise cancelling is on. It uses the phone's noise suppressor, echo canceler, and automatic gain. Turn it off for the plain microphone.
+7. Leave the app in the background to keep hearing the room. Swiping it away leaves the room. This PC has to be awake.
 
-Sound is 48 kHz mono, the same rate on every phone. Install 1.1.0 or newer on each phone. The 1.0.0 build used 16 kHz and will not sound right next to this one.
+Sound is 48 kHz mono, the same rate on every phone. Install 1.1.0 or newer on each phone. The 1.0.0 build used 16 kHz and will not sound right next to this one. Creating a room needs 1.2.0. A 1.1.0 phone stays in Everyone.
 
 The name stays on the phone. There is no login.
 

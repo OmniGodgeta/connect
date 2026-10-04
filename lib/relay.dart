@@ -8,7 +8,11 @@ import 'protocol.dart';
 abstract class Relay {
   Future<void> connect(void Function(RelayEvent event) onEvent);
 
-  void hello(String id, String name);
+  void hello(String id, String name, {String? room});
+
+  void joinRoom(String room);
+
+  void watchRooms(bool watch);
 
   void ptt(bool down);
 
@@ -45,8 +49,18 @@ class SocketRelay implements Relay {
   }
 
   @override
-  void hello(String id, String name) {
-    _channel?.sink.add(helloMessage(id, name));
+  void hello(String id, String name, {String? room}) {
+    _channel?.sink.add(helloMessage(id, name, room: room));
+  }
+
+  @override
+  void joinRoom(String room) {
+    _channel?.sink.add(joinMessage(room));
+  }
+
+  @override
+  void watchRooms(bool watch) {
+    _channel?.sink.add(roomsMessage(watch: watch));
   }
 
   @override
