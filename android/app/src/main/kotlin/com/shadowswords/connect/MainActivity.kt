@@ -1,9 +1,12 @@
 package com.shadowswords.connect
 
 import android.Manifest
+import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
+import android.provider.Settings
 import androidx.core.content.ContextCompat
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -27,31 +30,77 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "connect/room")
-            .setMethodCallHandler { call, result ->
-                when (call.method) {
-                    "notifications" -> requestNotifications(result)
-                    "start", "update" -> {
-                        val text = call.argument<String>("text") ?: "In the room"
-                        val intent = Intent(this, RoomService::class.java).putExtra("text", text)
-                        try {
-                            ContextCompat.startForegroundService(this, intent)
-                            result.success(true)
-                        } catch (error: Exception) {
-                            result.success(false)
-                        }
+        val channel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "connect/room")
+        TalkBridge.channel = channel
+        channel.setMethodCallHandler { call, result ->
+            when (call.method) {
+                "notifications" -> requestNotifications(result)
+                "start", "update" -> {
+                    val text = call.argument<String>("text") ?: "In the room"
+                    val intent = Intent(this, RoomService::class.java).putExtra("text", text)
+                    try {
+                        ContextCompat.startForegroundService(this, intent)
+                        result.success(true)
+                    } catch (error: Exception) {
+                        result.success(false)
                     }
-                    "stop" -> {
-                        stopService(Intent(this, RoomService::class.java))
-                        result.success(null)
-                    }
-                    "background" -> {
-                        moveTaskToBack(true)
-                        result.success(null)
-                    }
-                    else -> result.notImplemented()
                 }
+                "stop" -> {
+                    stopService(Intent(this, RoomService::class.java))
+                    result.success(null)
+                }
+                "background" -> {
+                    moveTaskToBack(true)
+                    result.success(null)
+                }
+                "arm" -> {
+                    val on = call.argument<Boolean>("on") == true
+                    if (!on) TalkBridge.releaseKeys()
+                    TalkBridge.armed = on
+                    result.success(null)
+                }
+                "keysGranted" -> result.success(keysGranted())
+                "overlayGranted" -> result.success(Settings.canDrawOverlays(this))
+                "openKeys" -> {
+                    startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                    result.success(null)
+                }
+                "openOverlay" -> {
+                    startActivity(
+                        Intent(
+                            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                            Uri.parse("package:$packageName"),
+                        ),
+                    )
+                    result.success(null)
+                }
+                "bubble" -> {
+                    val text = call.argument<String>("text") ?: "Hold to talk"
+                    BubbleOverlay.show(this, text)
+                    result.success(null)
+                }
+                "bubbleHide" -> {
+                    BubbleOverlay.hide()
+                    result.success(null)
+                }
+                else -> result.notImplemented()
             }
+        }
+    }
+
+    private fun keysGranted(): Boolean {
+        val master = Settings.Secure.getInt(
+            contentResolver,
+            Settings.Secure.ACCESSIBILITY_ENABLED,
+            0,
+        ) == 1
+        if (!master) return false
+        val enabled = Settings.Secure.getString(
+            contentResolver,
+            Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,
+        ) ?: return false
+        val mine = ComponentName(this, VolumeTalkService::class.java).flattenToString()
+        return enabled.split(':').any { it.equals(mine, ignoreCase = true) }
     }
 
     private fun requestNotifications(result: MethodChannel.Result) {

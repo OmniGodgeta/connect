@@ -52,6 +52,9 @@ void main() {
     expect(find.text('Members'), findsOneWidget);
     expect(find.text('Eric'), findsNWidgets(2));
     expect(find.text('Alex'), findsOneWidget);
+    expect(find.text('Add a photo'), findsOneWidget);
+    expect(find.text('Volume'), findsOneWidget);
+    expect(find.byType(Slider), findsOneWidget);
     await tester.binding.handlePopRoute();
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
@@ -62,8 +65,8 @@ void main() {
     // A paused app stops normal frames. Force one so the status line rebuilds.
     tester.binding.scheduleForcedFrame();
     await tester.pump();
-    expect(room.statusLine, 'Listening for your voice');
-    expect(find.text('Listening for your voice'), findsOneWidget);
+    expect(room.statusLine, 'Hold a volume key to talk');
+    expect(find.text('Hold a volume key to talk'), findsOneWidget);
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     await tester.pump();
     expect(room.statusLine, 'Hold to talk');

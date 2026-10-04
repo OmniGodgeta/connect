@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:connect/protocol.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -40,5 +43,14 @@ void main() {
 
     expect(parseEvent('not json'), isNull);
     expect(parseEvent('{"t":"nope"}'), isNull);
+
+    final cleared = parseEvent('{"t":"photo","id":"abc12345","jpeg":""}');
+    expect(cleared, isA<PhotoEvent>());
+    expect((cleared! as PhotoEvent).jpeg, isEmpty);
+
+    final jpeg = base64Encode(Uint8List.fromList([0xff, 0xd8, 0x00, 0xd9]));
+    final photo = parseEvent('{"t":"photo","id":"abc12345","jpeg":"$jpeg"}');
+    expect((photo! as PhotoEvent).jpeg, [0xff, 0xd8, 0x00, 0xd9]);
+    expect(parseEvent('{"t":"photo","id":"abc12345","jpeg":"!!!!"}'), isNull);
   });
 }

@@ -66,6 +66,15 @@ class AudioEvent extends RelayEvent {
   final Uint8List pcm;
 }
 
+class PhotoEvent extends RelayEvent {
+  const PhotoEvent(this.id, this.jpeg);
+
+  final String id;
+
+  /// Empty means the person cleared their picture.
+  final Uint8List jpeg;
+}
+
 class ErrorEvent extends RelayEvent {
   const ErrorEvent(this.code);
 
@@ -141,8 +150,29 @@ RelayEvent? parseEvent(String raw) {
       }
     case 'error':
       return ErrorEvent(_string(decoded['code']) ?? 'error');
+    case 'photo':
+      final id = decoded['id'];
+      final jpeg = decoded['jpeg'];
+      if (id is String && jpeg is String) {
+        final bytes = _jpeg(jpeg);
+        if (bytes != null) return PhotoEvent(id, bytes);
+      }
   }
   return null;
+}
+
+/// Empty is a clear. Anything else must be a small JPEG.
+Uint8List? _jpeg(String raw) {
+  if (raw.isEmpty) return Uint8List(0);
+  if (raw.length > 40000) return null;
+  try {
+    final bytes = base64Decode(raw);
+    if (bytes.length < 4 || bytes.length > 24 * 1024) return null;
+    if (bytes[0] != 0xff || bytes[1] != 0xd8) return null;
+    return bytes;
+  } catch (_) {
+    return null;
+  }
 }
 
 String? _string(Object? value) => value is String ? value : null;
@@ -180,3 +210,8 @@ String joinMessage(String room) => jsonEncode({'t': 'join', 'room': room});
 
 String roomsMessage({bool watch = true}) =>
     jsonEncode({'t': 'rooms', if (!watch) 'watch': false});
+
+/// [jpegBase64] is empty when the person removes their picture.
+/// The relay stamps the sender id. Image bytes never use the PCM channel.
+String photoMessage(String jpegBase64) =>
+    jsonEncode({'t': 'photo', 'jpeg': jpegBase64});

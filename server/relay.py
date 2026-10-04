@@ -11,12 +11,16 @@ Empty rooms disappear. Each room has its own floor and roster.
 Text frames are JSON. Binary frames are PCM signed-16 little-endian,
 mono, at the sample rate the apps agreed on. The relay does not care
 about the rate; it forwards bytes from whoever holds that room's floor.
+
+A photo is a text frame, never a binary frame. The JPEG stays under
+24 KB. Older apps ignore the message type and keep working.
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import base64
 import json
 import logging
 import re
@@ -35,6 +39,7 @@ DEFAULT_ROOM = "Everyone"
 MAX_PEOPLE = 24
 MAX_ROOMS = 16
 MAX_FRAME = 32_000
+MAX_PHOTO = 24 * 1024
 _ID = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
 
 
@@ -51,6 +56,23 @@ def valid_id(raw: Any) -> bool:
     return isinstance(raw, str) and _ID.fullmatch(raw) is not None
 
 
+def photo_bytes(raw: Any) -> bytes | None:
+    """Return JPEG bytes, b"" to clear, or None when the message is ignored."""
+    if raw == "":
+        return b""
+    if not isinstance(raw, str) or len(raw) > 40_000:
+        return None
+    try:
+        data = base64.b64decode(raw, validate=True)
+    except Exception:
+        return None
+    if len(data) < 4 or len(data) > MAX_PHOTO:
+        return None
+    if data[0] != 0xFF or data[1] != 0xD8:
+        return None
+    return data
+
+
 @dataclass
 class Client:
     id: str
@@ -58,6 +80,7 @@ class Client:
     ws: ServerConnection
     room: str = DEFAULT_ROOM
     wants_rooms: bool = False
+    photo: bytes | None = None
 
 
 class Room:
@@ -151,7 +174,13 @@ class Room:
                 if self.speakers.get(room_name) == ident:
                     self._release_locked(room_name, ident)
                     cleared_room = cleared_room or room_name
-                client = Client(ident, name, ws, room_name)
+                client = Client(
+                    ident,
+                    name,
+                    ws,
+                    room_name,
+                    photo=old.photo if old is not None else None,
+                )
                 self.clients[ident] = client
         if blocked:
             await _send(ws, {"t": "error", "code": "rooms"})
@@ -169,6 +198,9 @@ class Room:
         assert client is not None
         await _send(ws, {"t": "welcome", "id": ident, "name": name, "room": room_name})
         await self._broadcast_roster(room_name)
+        await self._send_room_photos(client)
+        if client.photo:
+            await self._broadcast_photo(room_name, client.id, client.photo)
         if old is not None and old.room != room_name:
             await self._broadcast_roster(old.room)
         if cleared_room is not None and old is not None:
@@ -195,6 +227,8 @@ class Room:
             await self.move(client, msg.get("room"))
         elif kind == "rooms":
             await self.subscribe_rooms(client, msg.get("watch") is not False)
+        elif kind == "photo":
+            await self.photo(client, msg.get("jpeg"))
 
     async def subscribe_rooms(self, client: Client, watch: bool) -> None:
         rows: list[dict[str, Any]] | None = None
@@ -264,8 +298,26 @@ class Room:
         if old_room is not None:
             await self._broadcast_roster(old_room)
         await self._broadcast_roster(room_name)
+        await self._send_room_photos(client)
+        if client.photo:
+            await self._broadcast_photo(room_name, client.id, client.photo)
         await self._push_rooms()
         log.info("move id=%s room=%s", client.id, room_name)
+
+    async def photo(self, client: Client, raw: Any) -> None:
+        data = photo_bytes(raw)
+        if data is None:
+            return
+        room_name = client.room
+        blob: bytes | None
+        async with self._lock:
+            if self.clients.get(client.id) is not client:
+                return
+            room_name = client.room
+            client.photo = None if data == b"" else data
+            blob = client.photo
+        log.info("photo id=%s bytes=%s", client.id, 0 if blob is None else len(blob))
+        await self._broadcast_photo(room_name, client.id, blob)
 
     async def ptt(self, client: Client, down: bool) -> None:
         granted = False
@@ -355,6 +407,21 @@ class Room:
                 await self._broadcast_talk(client.room, client.id, client.name, False)
                 await self._broadcast_roster(client.room)
 
+    async def _send_room_photos(self, client: Client) -> None:
+        async with self._lock:
+            snaps = [
+                (other.id, other.photo)
+                for other in self.clients.values()
+                if other.room == client.room and other.id != client.id and other.photo
+            ]
+        for ident, blob in snaps:
+            await _send(client.ws, _photo_payload(ident, blob))
+
+    async def _broadcast_photo(self, room_name: str, ident: str, blob: bytes | None) -> None:
+        async with self._lock:
+            targets = [c for c in self.clients.values() if c.room == room_name]
+        await self._send_many(targets, _photo_payload(ident, blob))
+
     async def _broadcast_talk(self, room_name: str, ident: str, name: str, down: bool) -> None:
         async with self._lock:
             targets = [c for c in self.clients.values() if c.room == room_name]
@@ -393,6 +460,11 @@ class Room:
         await asyncio.gather(*(one(c) for c in targets))
         for client in failed:
             await self.leave_if_current(client)
+
+
+def _photo_payload(ident: str, blob: bytes | None) -> dict[str, Any]:
+    jpeg = "" if not blob else base64.b64encode(blob).decode("ascii")
+    return {"t": "photo", "id": ident, "jpeg": jpeg}
 
 
 async def _send(ws: ServerConnection, data: dict[str, Any] | bytes, timeout: float = 2) -> None:

@@ -14,6 +14,7 @@ class DeviceAudio implements AudioEngine {
   StreamSubscription<Uint8List>? _mic;
   final List<int> _samples = <int>[];
   bool _listening = false;
+  bool _starting = false;
 
   @override
   Future<bool> ensureMic() async {
@@ -86,21 +87,30 @@ class DeviceAudio implements AudioEngine {
 
   @override
   Future<void> beginListen() async {
-    _samples.clear();
-    if (_listening) return;
-    await FlutterPcmSound.setup(
-      sampleRate: ConnectConfig.sampleRate,
-      channelCount: 1,
-    );
-    await FlutterPcmSound.setFeedThreshold(ConnectConfig.sampleRate ~/ 10);
-    FlutterPcmSound.setFeedCallback(_onFeed);
-    _listening = true;
-    FlutterPcmSound.start();
+    if (_listening || _starting) return;
+    _starting = true;
+    try {
+      await FlutterPcmSound.setup(
+        sampleRate: ConnectConfig.sampleRate,
+        channelCount: 1,
+      );
+      await FlutterPcmSound.setFeedThreshold(ConnectConfig.sampleRate ~/ 10);
+      FlutterPcmSound.setFeedCallback(_onFeed);
+      _listening = true;
+      FlutterPcmSound.start();
+    } finally {
+      _starting = false;
+    }
   }
 
   @override
   void play(Uint8List pcm) {
-    if (!_listening || pcm.length < 2) return;
+    if (pcm.length < 2) return;
+    _enqueue(pcm);
+    if (!_listening) unawaited(beginListen());
+  }
+
+  void _enqueue(Uint8List pcm) {
     final data = ByteData.sublistView(pcm);
     final end = pcm.length - (pcm.length.isOdd ? 1 : 0);
     for (var i = 0; i < end; i += 2) {

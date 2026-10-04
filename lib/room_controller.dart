@@ -1,11 +1,18 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 
 import 'alerts.dart';
 import 'audio_engine.dart';
+import 'chime.dart';
 import 'config.dart';
+import 'gain.dart';
+import 'level_store.dart';
 import 'name_store.dart';
+import 'photo_image.dart';
+import 'photo_store.dart';
+import 'presence.dart';
 import 'protocol.dart';
 import 'relay.dart';
 import 'room_store.dart';
@@ -17,6 +24,7 @@ enum RoomPhase { needName, connecting, live, left }
 
 typedef Cancel = void Function();
 typedef Scheduler = Cancel Function(Duration delay, void Function() fn);
+typedef PhotoPicker = Future<Uint8List?> Function();
 
 class RoomController extends ChangeNotifier {
   RoomController({
@@ -26,9 +34,14 @@ class RoomController extends ChangeNotifier {
     required this.alerts,
     TalkSettingsStore? settings,
     RoomStore? rooms,
+    PhotoStore? photoStore,
+    LevelStore? levelStore,
+    this.pickPhoto,
     this.schedule = _timer,
   }) : settings = settings ?? MemoryTalkSettings(),
-       rooms = rooms ?? MemoryRoomStore();
+       rooms = rooms ?? MemoryRoomStore(),
+       photoStore = photoStore ?? MemoryPhotoStore(),
+       levelStore = levelStore ?? MemoryLevelStore();
 
   final Relay relay;
   final AudioEngine audio;
@@ -36,8 +49,12 @@ class RoomController extends ChangeNotifier {
   final RoomAlerts alerts;
   final TalkSettingsStore settings;
   final RoomStore rooms;
+  final PhotoStore photoStore;
+  final LevelStore levelStore;
+  final PhotoPicker? pickPhoto;
   final Scheduler schedule;
   final VoiceGate _gate = VoiceGate();
+  final Presence _presence = Presence();
   final VoiceToneMeter _meter = VoiceToneMeter();
   final ValueNotifier<VoiceTone> voice = ValueNotifier<VoiceTone>(
     VoiceTone.silent,
@@ -61,6 +78,11 @@ class RoomController extends ChangeNotifier {
   bool noiseCancel = true;
   bool voiceMuted = false;
   bool inBackground = false;
+  bool volumeKeysReady = false;
+  bool bubbleReady = false;
+  Uint8List? selfPhoto;
+  final Map<String, Uint8List> photos = {};
+  final Map<String, double> levels = {};
   TalkMode? _frontMode;
   bool _frontMute = false;
 
@@ -90,18 +112,32 @@ class RoomController extends ChangeNotifier {
       return '$speakerName is talking';
     }
     if (banner != null) return banner!;
+    if (inBackground) return 'Hold a volume key to talk';
     if (mode == TalkMode.voice) {
       return voiceMuted ? 'Voice is muted' : 'Listening for your voice';
     }
     return 'Hold to talk';
   }
 
-  String _notificationText() {
+  String get bubbleLine {
+    if (selfTalking) return "You're talking";
     if (speakerId != null && speakerId != selfId && speakerName != null) {
       return '$speakerName is talking';
     }
-    if (inBackground && mode == TalkMode.voice && !voiceMuted) {
-      return 'Speak to talk in $roomName';
+    return 'Hold to talk';
+  }
+
+  String _notificationText() {
+    if (selfTalking) return "You're talking";
+    if (speakerId != null && speakerId != selfId && speakerName != null) {
+      return '$speakerName is talking';
+    }
+    if (inBackground) {
+      if (!volumeKeysReady && !bubbleReady) {
+        return 'Open Connect to allow volume keys or the bubble';
+      }
+      if (!volumeKeysReady) return 'Hold the bubble to talk in $roomName';
+      return 'Hold a volume key to talk in $roomName';
     }
     return 'In $roomName';
   }
@@ -115,7 +151,12 @@ class RoomController extends ChangeNotifier {
     final saved = await names.load();
     final talk = await settings.load();
     final savedRoom = await rooms.load();
+    selfPhoto = await photoStore.load();
+    levels
+      ..clear()
+      ..addAll(await levelStore.load());
     if (_closed) return;
+    await refreshSide();
     mode = talk.mode;
     noiseCancel = talk.noiseCancel;
     roomName = cleanName(savedRoom) ?? everyoneRoom;
@@ -181,6 +222,8 @@ class RoomController extends ChangeNotifier {
     await audio.stopMic();
     await audio.stopPlay();
     await relay.close();
+    await alerts.armKeys(false);
+    await alerts.hideBubble();
     await alerts.stop();
     if (!_closed) notifyListeners();
   }
@@ -244,8 +287,9 @@ class RoomController extends ChangeNotifier {
     );
   }
 
-  /// Minimizing the app listens for speech so people can talk over a game.
-  /// The saved Hold or Voice choice comes back when the app is open again.
+  /// Minimizing closes the voice mic so a loud game cannot open it.
+  /// A volume key or the bubble holds the floor. The saved Hold or Voice
+  /// choice comes back when the app is open again.
   Future<void> enterBackground() async {
     if (inBackground || _closed) return;
     if (phase == RoomPhase.needName || phase == RoomPhase.left) return;
@@ -260,9 +304,11 @@ class RoomController extends ChangeNotifier {
     }
     _gate.reset();
     _pendingAudio.clear();
-    mode = TalkMode.voice;
+    mode = TalkMode.hold;
     voiceMuted = false;
     banner = null;
+    await refreshSide();
+    await alerts.armKeys(true);
     if (!_closed) notifyListeners();
     await _kickMic();
     if (phase == RoomPhase.live) _pushNotification();
@@ -284,10 +330,21 @@ class RoomController extends ChangeNotifier {
     _pendingAudio.clear();
     mode = restore;
     voiceMuted = restore == TalkMode.voice && mute;
+    await alerts.armKeys(false);
+    await alerts.hideBubble();
+    await refreshSide();
     if (!_closed) notifyListeners();
     await _kickMic();
     if (phase == RoomPhase.live) _pushNotification();
   }
+
+  Future<void> sideHold() => hold();
+
+  Future<void> sideRelease() => release();
+
+  Future<void> openVolumeKeys() => alerts.openKeys();
+
+  Future<void> openBubble() => alerts.openOverlay();
 
   Future<void> openRooms() async {
     if (phase != RoomPhase.live || _closed) return;
@@ -395,6 +452,7 @@ class RoomController extends ChangeNotifier {
     switch (event) {
       case WelcomeEvent():
         _everLive = true;
+        _presence.reset();
         phase = RoomPhase.live;
         banner = null;
         _attempt = 0;
@@ -403,6 +461,7 @@ class RoomController extends ChangeNotifier {
           roomName = nextRoom;
           unawaited(rooms.save(roomName));
         }
+        _publishPhoto();
         _pushNotification();
         notifyListeners();
         _kickMic();
@@ -412,10 +471,25 @@ class RoomController extends ChangeNotifier {
         notifyListeners();
       case RosterEvent():
         people = event.people;
+        final shift = _presence.take(
+          people.map((person) => person.id),
+          selfId,
+        );
+        if (shift.$1 > 0) audio.play(arriveChime);
+        if (shift.$2 > 0) audio.play(leaveChime);
         _applySpeaker(event.speakerId, _nameFor(event.speakerId));
         if (phase == RoomPhase.live) _pushNotification();
         notifyListeners();
         _kickMic();
+      case PhotoEvent():
+        if (event.jpeg.isEmpty) {
+          photos.remove(event.id);
+          if (event.id == selfId) selfPhoto = null;
+        } else {
+          photos[event.id] = event.jpeg;
+          if (event.id == selfId) selfPhoto = event.jpeg;
+        }
+        notifyListeners();
       case FloorEvent():
         _onFloor(event);
       case TalkEvent():
@@ -434,10 +508,15 @@ class RoomController extends ChangeNotifier {
         notifyListeners();
         _kickMic();
       case AudioEvent():
-        if (_listeningTo != null) {
-          _hear(event.pcm);
-          audio.play(event.pcm);
+        final from = _listeningTo;
+        if (from == null) break;
+        final heard = applyGain(event.pcm, levelFor(from));
+        if (heard.isEmpty) {
+          if (!voice.value.quiet) _quiet();
+          break;
         }
+        _hear(heard);
+        audio.play(heard);
       case ErrorEvent():
         banner = switch (event.code) {
           'full' => 'That room is full.',
@@ -741,6 +820,92 @@ class RoomController extends ChangeNotifier {
       _service = true;
       unawaited(alerts.start(text));
     }
+    if (inBackground) unawaited(alerts.showBubble(bubbleLine));
+  }
+
+  Uint8List? photoOf(String id) {
+    if (id == selfId && selfPhoto != null && selfPhoto!.isNotEmpty) {
+      return selfPhoto;
+    }
+    final bytes = photos[id];
+    if (bytes == null || bytes.isEmpty) return null;
+    return bytes;
+  }
+
+  double levelFor(String id) {
+    final value = levels[id];
+    if (value == null) return 1;
+    return value.clamp(0.0, 1.0);
+  }
+
+  void previewLevel(String id, double value) {
+    _putLevel(id, value);
+    if (!_closed) notifyListeners();
+  }
+
+  Future<void> setLevel(String id, double value) async {
+    _putLevel(id, value);
+    await levelStore.save(Map<String, double>.of(levels));
+    if (!_closed) notifyListeners();
+  }
+
+  void _putLevel(String id, double value) {
+    final next = value.clamp(0.0, 1.0);
+    if (next >= 0.99) {
+      levels.remove(id);
+    } else {
+      levels[id] = next;
+    }
+  }
+
+  Future<void> choosePhoto() async {
+    final picker = pickPhoto;
+    if (picker == null || _closed) return;
+    final raw = await picker();
+    if (raw == null || _closed) return;
+    final jpeg = shrinkJpeg(raw);
+    if (jpeg == null) {
+      banner = 'That picture could not be used.';
+      if (!_closed) notifyListeners();
+      return;
+    }
+    await _storePhoto(jpeg);
+  }
+
+  Future<void> clearPhoto() => _storePhoto(null);
+
+  Future<void> _storePhoto(Uint8List? jpeg) async {
+    selfPhoto = jpeg;
+    final id = selfId;
+    if (id != null) {
+      if (jpeg == null) {
+        photos.remove(id);
+      } else {
+        photos[id] = jpeg;
+      }
+    }
+    await photoStore.save(jpeg);
+    if (_closed) return;
+    if (phase == RoomPhase.live) {
+      relay.photo(jpeg == null ? '' : base64Encode(jpeg));
+    }
+    notifyListeners();
+  }
+
+  void _publishPhoto() {
+    final jpeg = selfPhoto;
+    if (jpeg == null || jpeg.isEmpty || phase != RoomPhase.live) return;
+    relay.photo(base64Encode(jpeg));
+  }
+
+  Future<void> refreshSide() async {
+    final keys = await alerts.keysGranted();
+    final overlay = await alerts.overlayGranted();
+    if (_closed) return;
+    if (keys == volumeKeysReady && overlay == bubbleReady) return;
+    volumeKeysReady = keys;
+    bubbleReady = overlay;
+    notifyListeners();
   }
 
   @override
@@ -751,6 +916,8 @@ class RoomController extends ChangeNotifier {
     _pending?.call();
     _decay?.call();
     voice.dispose();
+    unawaited(alerts.armKeys(false));
+    unawaited(alerts.hideBubble());
     unawaited(relay.close());
     unawaited(audio.dispose());
     unawaited(alerts.stop());

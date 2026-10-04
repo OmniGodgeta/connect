@@ -4,7 +4,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'alerts.dart';
 import 'audio_io.dart';
+import 'gallery.dart';
+import 'level_store.dart';
 import 'name_store.dart';
+import 'photo_store.dart';
 import 'relay.dart';
 import 'room_controller.dart';
 import 'room_store.dart';
@@ -24,14 +27,25 @@ Future<void> main() async {
     ),
   );
   final prefs = await SharedPreferences.getInstance();
+  final alerts = PlatformAlerts();
   final controller = RoomController(
     relay: SocketRelay(),
     audio: DeviceAudio(),
     names: PrefsNameStore(prefs),
     settings: PrefsTalkSettings(prefs),
     rooms: PrefsRoomStore(prefs),
-    alerts: PlatformAlerts(),
+    photoStore: PrefsPhotoStore(prefs),
+    levelStore: PrefsLevelStore(prefs),
+    pickPhoto: pickGalleryPhoto,
+    alerts: alerts,
   );
+  alerts.bind((down) {
+    if (down) {
+      controller.sideHold();
+    } else {
+      controller.sideRelease();
+    }
+  });
   runApp(ConnectApp(controller: controller));
 }
 

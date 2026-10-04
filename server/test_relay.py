@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 
 from websockets.asyncio.client import connect
@@ -317,6 +318,54 @@ async def test_room_limits() -> None:
         await server.wait_closed()
 
 
+async def test_photo_is_not_audio(port: int) -> None:
+    eric = "eric000000000021"
+    alex = "alex000000000021"
+    jpeg = b"\xff\xd8" + b"\x00" * 8 + b"\xff\xd9"
+    encoded = base64.b64encode(jpeg).decode()
+    a = await join(port, eric, "Eric")
+    b = await join(port, alex, "Alex")
+    await a.expect("roster")
+    await a.ws.send(json.dumps({"t": "photo", "jpeg": encoded, "id": "spoofed"}))
+    seen = await b.expect("photo")
+    assert seen["id"] == eric and base64.b64decode(seen["jpeg"]) == jpeg
+    echo = await a.expect("photo")
+    assert echo["id"] == eric
+
+    cam = await join(port, "cam0000000000021", "Cam")
+    forwarded = await cam.expect("photo")
+    assert forwarded["id"] == eric
+    await a.expect("roster")
+    await b.expect("roster")
+
+    await a.ws.send(json.dumps({"t": "photo", "jpeg": "!!!!"}))
+    await a.ws.send(json.dumps({"t": "photo", "jpeg": ""}))
+    assert (await a.expect("photo"))["jpeg"] == ""
+    assert (await b.expect("photo"))["jpeg"] == ""
+    assert (await cam.expect("photo"))["jpeg"] == ""
+
+    huge = base64.b64encode(b"\xff\xd8" + b"\x00" * (24 * 1024)).decode()
+    await a.ws.send(json.dumps({"t": "photo", "jpeg": huge}))
+    await a.ws.send(json.dumps({"t": "ptt", "down": True}))
+    assert (await a.expect("floor"))["ok"] is True
+    await a.expect("talk")
+    await a.expect("roster")
+    await b.expect("talk")
+    await b.expect("roster")
+    await cam.expect("talk")
+    await cam.expect("roster")
+    await a.ws.send(b"\x01\x00")
+    assert await b.next_bytes() == b"\x01\x00"
+    try:
+        stray = await asyncio.wait_for(a.q.get(), 0.2)
+    except TimeoutError:
+        stray = None
+    assert stray is None, stray
+    await a.close()
+    await b.close()
+    await cam.close()
+
+
 async def main() -> None:
     room = Room(floor_audio_timeout=0.45, watch_interval=0.05)
     server, watcher = await serve_room("127.0.0.1", 0, room)
@@ -331,6 +380,7 @@ async def main() -> None:
         await test_floor_timeout(port)
         await test_rooms_stay_separate(port)
         await test_room_limits()
+        await test_photo_is_not_audio(port)
     finally:
         room.stop()
         watcher.cancel()

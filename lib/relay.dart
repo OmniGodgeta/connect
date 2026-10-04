@@ -16,6 +16,8 @@ abstract class Relay {
 
   void ptt(bool down);
 
+  void photo(String jpegBase64);
+
   void audio(List<int> pcm);
 
   Future<void> close();
@@ -66,6 +68,11 @@ class SocketRelay implements Relay {
   @override
   void ptt(bool down) {
     _channel?.sink.add(pttMessage(down));
+  }
+
+  @override
+  void photo(String jpegBase64) {
+    _channel?.sink.add(photoMessage(jpegBase64));
   }
 
   @override

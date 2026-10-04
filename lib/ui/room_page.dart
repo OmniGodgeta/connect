@@ -64,6 +64,43 @@ class RoomPage extends StatelessWidget {
               ),
               const SizedBox(height: 8),
               _TalkControls(room: room),
+              if (live && (!room.volumeKeysReady || !room.bubbleReady)) ...[
+                const SizedBox(height: 4),
+                Wrap(
+                  alignment: WrapAlignment.center,
+                  spacing: 8,
+                  children: [
+                    if (!room.volumeKeysReady)
+                      TextButton(
+                        key: const Key('volume-keys'),
+                        onPressed: room.openVolumeKeys,
+                        style: TextButton.styleFrom(
+                          foregroundColor: ConnectColors.cyan,
+                          visualDensity: VisualDensity.compact,
+                          textStyle: const TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        child: const Text('Volume keys'),
+                      ),
+                    if (!room.bubbleReady)
+                      TextButton(
+                        key: const Key('game-bubble'),
+                        onPressed: room.openBubble,
+                        style: TextButton.styleFrom(
+                          foregroundColor: ConnectColors.cyan,
+                          visualDensity: VisualDensity.compact,
+                          textStyle: const TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        child: const Text('Bubble over games'),
+                      ),
+                  ],
+                ),
+              ],
               const SizedBox(height: 8),
               Text(
                 room.statusLine,
@@ -246,10 +283,10 @@ class _TalkControls extends StatelessWidget {
         ),
         Text(
           hold
-              ? 'Press and hold the button. A game in front listens for your voice.'
+              ? 'Press and hold the button. In a game, hold a volume key or the bubble.'
               : room.voiceMuted
-              ? 'Tap the button to listen for your voice again.'
-              : 'Just speak. Tap the button to mute. A game in front keeps listening.',
+              ? 'Tap the button to listen again. In a game, use a volume key or the bubble.'
+              : 'Just speak. Tap the button to mute. In a game, use a volume key or the bubble.',
           textAlign: TextAlign.center,
           style: const TextStyle(
             color: ConnectColors.muted,
@@ -326,7 +363,12 @@ class _TalkingFace extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final face = ProfileFace(id: person.id, diameter: diameter);
+    final face = ProfileFace(
+      id: person.id,
+      diameter: diameter,
+      photo: room.photoOf(person.id),
+      onTap: person.id == room.selfId ? room.choosePhoto : null,
+    );
     if (!_active) return _frame(face, false);
     return VoiceBrush(
       room: room,
@@ -538,11 +580,69 @@ Widget _personTile(RoomController room, Person person) {
         _TalkingFace(room: room, person: person, diameter: 42),
         const SizedBox(width: 12),
         Expanded(
-          child: Text(
-            person.name,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                person.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 17,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              if (mine)
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton(
+                    key: const Key('pick-photo'),
+                    onPressed: room.choosePhoto,
+                    style: TextButton.styleFrom(
+                      foregroundColor: ConnectColors.cyan,
+                      visualDensity: VisualDensity.compact,
+                      padding: EdgeInsets.zero,
+                      minimumSize: const Size(0, 32),
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    child: Text(
+                      room.photoOf(person.id) == null
+                          ? 'Add a photo'
+                          : 'Change photo',
+                    ),
+                  ),
+                ),
+              if (mine && room.photoOf(person.id) != null)
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton(
+                    key: const Key('clear-photo'),
+                    onPressed: room.clearPhoto,
+                    style: TextButton.styleFrom(
+                      foregroundColor: ConnectColors.muted,
+                      visualDensity: VisualDensity.compact,
+                      padding: EdgeInsets.zero,
+                      minimumSize: const Size(0, 32),
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    child: const Text('Remove photo'),
+                  ),
+                ),
+              if (!mine) ...[
+                const Text(
+                  'Volume',
+                  style: TextStyle(color: ConnectColors.muted, fontSize: 12),
+                ),
+                Slider(
+                  key: Key('level-${person.id}'),
+                  value: room.levelFor(person.id),
+                  onChanged: (value) => room.previewLevel(person.id, value),
+                  onChangeEnd: (value) {
+                    room.setLevel(person.id, value);
+                  },
+                ),
+              ],
+            ],
           ),
         ),
         if (mine)

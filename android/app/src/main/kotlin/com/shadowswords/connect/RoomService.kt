@@ -59,6 +59,9 @@ class RoomService : Service() {
     }
 
     override fun onDestroy() {
+        TalkBridge.releaseKeys()
+        TalkBridge.armed = false
+        BubbleOverlay.hide()
         wake?.let { if (it.isHeld) it.release() }
         wake = null
         super.onDestroy()

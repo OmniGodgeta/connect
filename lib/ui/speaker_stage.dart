@@ -78,7 +78,14 @@ class SpeakerStage extends StatelessWidget {
                           child: Transform.scale(
                             scaleX: speakerScaleX(tone),
                             scaleY: speakerScaleY(tone),
-                            child: ProfileFace(id: person.id, diameter: 128),
+                            child: ProfileFace(
+                              id: person.id,
+                              diameter: 128,
+                              photo: room.photoOf(person.id),
+                              onTap: person.id == room.selfId
+                                  ? room.choosePhoto
+                                  : null,
+                            ),
                           ),
                         ),
                       ),

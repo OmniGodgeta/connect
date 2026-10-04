@@ -14,15 +14,15 @@ The repo is public so a link works for friends. The release APK is the download.
 2. Install the APK from the GitHub release.
 3. Open Connect, type the name people should see, and join. You land in Everyone.
 4. Tap Rooms to create a room or join one a friend created. One person talks at a time in each room.
-5. The big number is how many people are in the room. Tap it to see who is there. Each person has a picture, and it is the same picture on every phone.
+5. The big number is how many people are in the room. Tap it to see who is there. Each person has a picture. Tap your picture, or Add a photo, to use one from your gallery. Until then, Connect draws a face from your id, and that drawn face is the same on every phone. A photo you pick shows up for everyone else in the room.
 6. While someone talks, their picture grows and shrinks with their voice. Rings around it move like a speaker. A low voice pushes the picture out. A brighter voice pulls it in.
-7. Choose Hold or Voice. Hold means press the big button. Voice means just speak, and tap the button to mute.
-8. Noise cancelling is on. It uses the phone's noise suppressor, echo canceler, and automatic gain. Turn it off for the plain microphone.
-9. Minimize Connect while a game is open. It listens for your voice, so you can talk without holding the button. Opening Connect again uses the Hold or Voice choice you saved. Swiping Connect away leaves the room. This PC has to be awake.
+7. In the member list, each other person has a volume slider. Turning one friend down does not change anyone else, and it stays on this phone.
+8. A short sound plays when someone else joins or leaves. The people already in the room when you arrive do not each play that sound.
+9. Choose Hold or Voice. Hold means press the big button. Voice means just speak, and tap the button to mute.
+10. Noise cancelling is on. It uses the phone's noise suppressor, echo canceler, and automatic gain. Turn it off for the plain microphone.
+11. Before you play a game, turn on Volume keys and Bubble over games if Connect asks. Volume keys is in the phone's accessibility settings. The bubble is "display over other apps". Then minimize Connect. Holding a volume key, or holding Talk on the bubble, transmits. Letting go stops. A loud game does not open the microphone. The bubble shows who is talking. Opening Connect again uses the Hold or Voice choice you saved. Swiping Connect away leaves the room. This PC has to be awake.
 
-The game keeps its own sound while Connect is minimized. A loud game can still open the microphone, because noise cancelling then has no copy of the game audio to cancel.
-
-Sound is 48 kHz mono, the same rate on every phone. Install 1.1.0 or newer on each phone. The 1.0.0 build used 16 kHz and will not sound right next to this one. Creating a room needs 1.2.0 or newer. A 1.1.0 phone stays in Everyone. Talking while a game is in front needs 1.3.0 or newer. The talking picture needs 1.4.0. A 1.3.0 phone still talks at 48 kHz and listens when you minimize it, and it does not show the pictures.
+Sound is 48 kHz mono, the same rate on every phone. Install 1.1.0 or newer on each phone. The 1.0.0 build used 16 kHz and will not sound right next to this one. Creating a room needs 1.2.0 or newer. A 1.1.0 phone stays in Everyone. The talking picture needs 1.4.0. Volume keys, the bubble, a shared photo, the join and leave sound, and per-person volume need 1.5.0. A 1.4.0 phone still talks at 48 kHz, shows the painted pictures, and listens for speech when you minimize it. It ignores the photo message.
 
 The name stays on the phone. There is no login.
 

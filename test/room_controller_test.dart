@@ -2,6 +2,9 @@ import 'dart:typed_data';
 
 import 'package:connect/alerts.dart';
 import 'package:connect/audio_engine.dart';
+import 'package:connect/chime.dart';
+import 'package:connect/photo_store.dart';
+import 'package:image/image.dart' as img;
 import 'package:connect/name_store.dart';
 import 'package:connect/protocol.dart';
 import 'package:connect/relay.dart';
@@ -42,6 +45,9 @@ class FakeRelay implements Relay {
   void ptt(bool down) => log.add('ptt:$down');
 
   @override
+  void photo(String jpeg) => log.add('photo:${jpeg.length}');
+
+  @override
   void audio(List<int> pcm) => log.add('audio:${pcm.length}');
 
   @override
@@ -55,6 +61,7 @@ class FakeAudio implements AudioEngine {
   bool allow = true;
   int played = 0;
   int begins = 0;
+  Uint8List? last;
 
   @override
   Future<bool> ensureMic() async => allow;
@@ -91,6 +98,7 @@ class FakeAudio implements AudioEngine {
   @override
   void play(Uint8List pcm) {
     played += pcm.length;
+    last = Uint8List.fromList(pcm);
   }
 
   @override
@@ -102,6 +110,8 @@ class FakeAudio implements AudioEngine {
 
 class FakeAlerts extends NoopAlerts {
   final List<String> log = [];
+  bool armed = false;
+  String? bubble;
 
   @override
   Future<void> start(String text) async => log.add('start:$text');
@@ -111,6 +121,29 @@ class FakeAlerts extends NoopAlerts {
 
   @override
   Future<void> stop() async => log.add('stop');
+
+  @override
+  Future<void> armKeys(bool on) async {
+    armed = on;
+  }
+
+  @override
+  Future<void> showBubble(String text) async {
+    bubble = text;
+  }
+
+  @override
+  Future<void> hideBubble() async {
+    bubble = null;
+  }
+}
+
+class DeniedAlerts extends FakeAlerts {
+  @override
+  Future<bool> keysGranted() async => false;
+
+  @override
+  Future<bool> overlayGranted() async => false;
 }
 
 RoomController buildRoom({
@@ -120,6 +153,8 @@ RoomController buildRoom({
   FakeAlerts? alerts,
   MemoryTalkSettings? settings,
   MemoryRoomStore? rooms,
+  PhotoStore? photoStore,
+  PhotoPicker? pickPhoto,
   Scheduler? schedule,
 }) {
   return RoomController(
@@ -128,6 +163,8 @@ RoomController buildRoom({
     names: names ?? MemoryNameStore(),
     settings: settings,
     rooms: rooms,
+    photoStore: photoStore,
+    pickPhoto: pickPhoto,
     alerts: alerts ?? FakeAlerts(),
     schedule: schedule ?? (_, _) => () {},
   );
@@ -377,10 +414,9 @@ void main() {
 
     await room.enterBackground();
     expect(room.inBackground, isTrue);
-    expect(room.mode, TalkMode.voice);
+    expect(room.mode, TalkMode.hold);
     expect(room.voiceMuted, isFalse);
-    expect(audio.mic, isTrue);
-    expect(audio.alongside, isTrue);
+    expect(audio.mic, isFalse);
     expect(settings.current.mode, TalkMode.hold);
 
     await room.leaveBackground();
@@ -412,8 +448,8 @@ void main() {
     expect(audio.mic, isFalse);
 
     await room.enterBackground();
-    expect(room.voiceMuted, isFalse);
-    expect(audio.mic, isTrue);
+    expect(room.mode, TalkMode.hold);
+    expect(audio.mic, isFalse);
 
     await room.leaveBackground();
     expect(room.mode, TalkMode.voice);
@@ -430,5 +466,114 @@ void main() {
     expect(room.speakerName, 'Alex');
     expect(room.voice.value.bass, greaterThan(0.4));
     expect(room.voice.value.quiet, isFalse);
+  });
+
+  test('a volume key holds the floor while a game is in front', () async {
+    final relay = FakeRelay();
+    final audio = FakeAudio();
+    final alerts = FakeAlerts();
+    final room = buildRoom(relay: relay, audio: audio, alerts: alerts);
+    await enter(room, relay, 'Eric');
+
+    await room.enterBackground();
+    expect(alerts.armed, isTrue);
+    expect(alerts.bubble, 'Hold to talk');
+    expect(audio.mic, isFalse);
+
+    await room.sideHold();
+    expect(relay.log, contains('ptt:true'));
+    relay.emit(const FloorEvent(true, null));
+    relay.emit(TalkEvent(room.selfId!, 'Eric', true));
+    await pumpEventQueue();
+    expect(audio.mic, isTrue);
+    expect(audio.alongside, isTrue);
+    expect(alerts.bubble, "You're talking");
+
+    await room.sideRelease();
+    expect(audio.mic, isFalse);
+    expect(relay.log, contains('ptt:false'));
+
+    relay.emit(const TalkEvent('alex0001', 'Alex', true));
+    await pumpEventQueue();
+    expect(alerts.bubble, 'Alex is talking');
+
+    await room.leaveBackground();
+    expect(alerts.armed, isFalse);
+    expect(alerts.bubble, isNull);
+    expect(room.mode, TalkMode.hold);
+  });
+
+  test('the first roster is quiet and a later arrival chimes', () async {
+    final relay = FakeRelay();
+    final audio = FakeAudio();
+    final room = buildRoom(relay: relay, audio: audio);
+    await enter(room, relay, 'Eric');
+    expect(audio.played, 0);
+
+    relay.emit(
+      RosterEvent([
+        Person(room.selfId!, 'Eric'),
+        const Person('alex0001', 'Alex'),
+      ], null),
+    );
+    expect(audio.played, arriveChime.length);
+
+    relay.emit(RosterEvent([Person(room.selfId!, 'Eric')], null));
+    expect(audio.played, arriveChime.length + leaveChime.length);
+
+    final before = audio.played;
+    relay.emit(WelcomeEvent(room.selfId!, 'Eric', room: 'Cabin'));
+    relay.emit(
+      RosterEvent([
+        Person(room.selfId!, 'Eric'),
+        const Person('ada0000000000001', 'Ada'),
+      ], null),
+    );
+    expect(audio.played, before);
+  });
+
+  test('one person can be turned down without the others', () async {
+    final relay = FakeRelay();
+    final audio = FakeAudio();
+    final room = buildRoom(relay: relay, audio: audio);
+    await enter(room, relay, 'Eric');
+    relay.emit(const TalkEvent('alex0001', 'Alex', true));
+    await room.setLevel('alex0001', 0);
+    final before = audio.played;
+    relay.emit(AudioEvent(tone(8, 10000)));
+    expect(audio.played, before);
+    expect(room.voice.value.quiet, isTrue);
+
+    await room.setLevel('alex0001', 0.5);
+    relay.emit(AudioEvent(tone(4, 10000)));
+    final sample = ByteData.sublistView(audio.last!).getInt16(0, Endian.little);
+    expect(sample, inInclusiveRange(4900, 5100));
+    expect(room.levelFor('cam0000000000001'), 1);
+  });
+
+  test('a chosen picture is sent and a clear removes it', () async {
+    final relay = FakeRelay();
+    final store = MemoryPhotoStore();
+    final jpeg = Uint8List.fromList(
+      img.encodeJpg(img.Image(width: 8, height: 8)),
+    );
+    final room = buildRoom(
+      relay: relay,
+      photoStore: store,
+      pickPhoto: () async => jpeg,
+    );
+    await enter(room, relay, 'Eric');
+    await room.choosePhoto();
+    expect(room.photoOf(room.selfId!), isNotNull);
+    expect(store.current, isNotNull);
+    expect(relay.log.any((line) => line.startsWith('photo:') && line != 'photo:0'), isTrue);
+
+    relay.emit(PhotoEvent('alex0001', jpeg));
+    expect(room.photoOf('alex0001'), jpeg);
+
+    await room.clearPhoto();
+    expect(room.photoOf(room.selfId!), isNull);
+    expect(store.current, isNull);
+    expect(relay.log.last, 'photo:0');
   });
 }

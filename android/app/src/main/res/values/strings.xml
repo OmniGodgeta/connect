@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="volume_talk_desc">Connect uses the volume keys as hold to talk while a game is in front. It does not read what is on the screen.</string>
+</resources>

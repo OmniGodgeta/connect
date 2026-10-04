@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 
@@ -64,13 +65,27 @@ class PortraitData {
 }
 
 class ProfileFace extends StatelessWidget {
-  const ProfileFace({super.key, required this.id, required this.diameter});
+  const ProfileFace({
+    super.key,
+    required this.id,
+    required this.diameter,
+    this.photo,
+    this.onTap,
+  });
 
   final String id;
   final double diameter;
+  final Uint8List? photo;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
+    final face = photo == null ? _painted() : _photo(photo!);
+    if (onTap == null) return face;
+    return GestureDetector(onTap: onTap, child: face);
+  }
+
+  Widget _painted() {
     return SizedBox(
       width: diameter,
       height: diameter,
@@ -78,6 +93,21 @@ class ProfileFace extends StatelessWidget {
         child: CustomPaint(
           painter: _PortraitPainter(PortraitData.of(id)),
           child: const SizedBox.expand(),
+        ),
+      ),
+    );
+  }
+
+  Widget _photo(Uint8List bytes) {
+    return SizedBox(
+      width: diameter,
+      height: diameter,
+      child: ClipOval(
+        child: Image.memory(
+          bytes,
+          fit: BoxFit.cover,
+          gaplessPlayback: true,
+          errorBuilder: (_, _, _) => _painted(),
         ),
       ),
     );
